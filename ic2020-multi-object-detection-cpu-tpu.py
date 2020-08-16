@@ -11,6 +11,9 @@ import imutils
 from time import time
 from uuid import uuid4
 import platform
+import json
+import multiprocessing
+import paho.mqtt.client as mqtt
 
 EDGETPU_SHARED_LIB = {
   'Linux': 'libedgetpu.so.1',
@@ -86,6 +89,12 @@ class TrafficObject:
         self.labels = [classLabel]
         self.detectionMissDebit = detectionMissDebit
         self.maxCredit = maxCredit
+        self.track = []
+        self.track.append(TrafficObject.__calcCenter(bBox)) # start track
+
+    # Destructor method
+    def __del__(self):
+        print("Object {} says good bye.".format(self.id))
     
     # Calculates the intersection over union (class method)
     def __calcIoU(self, boxA, boxB):
@@ -128,8 +137,7 @@ class TrafficObject:
         return newTracker
 
     # Get IoU of tracker box vs detection
-    def getIoU(self, boxInput):
-        
+    def getIoU(self, boxInput):        
         return self.__calcIoU(boxInput, self.__getBBox())
 
     # Get object ID
@@ -161,11 +169,16 @@ class TrafficObject:
     # Check if tracker is still within image
     def isGone(self):
         objectIsGone = False
-        cX = self.box[0]+((self.box[2]-self.box[0])/2)
-        cY = self.box[1]+((self.box[3]-self.box[1])/2)
+        (cX, cY) = TrafficObject.__calcCenter(self.box)
         if (cX >= TrafficObject.imgWidth) or (cY >= TrafficObject.imgHeight) or (cX <= 0) or (cY <= 0):
             objectIsGone = True
         return objectIsGone
+
+    # Add center of frame (of tracker) to list
+    def __calcCenter(box):
+        cX = box[0]+((box[2]-box[0])/2)
+        cY = box[1]+((box[3]-box[1])/2)
+        return (cX, cY)  
 
     # Get bounding box absolute coordinates
     def getBBoxCoord(self):
@@ -177,10 +190,10 @@ class TrafficObject:
         self.detectionCredit -= self.detectionMissDebit # We remove the credit from the last detection
         if ok:
             self.box = (int(bbox[0]), int(bbox[1]), int(bbox[0]+bbox[2]), int(bbox[1]+bbox[3]))
+            self.track.append(TrafficObject.__calcCenter(self.box)) # extend track
             return True
         else:
             return False #tracker lost track
-
 
 # Tracker related code
 trafficDict = {} # Contains the list of objects found
@@ -242,7 +255,7 @@ if args["format"] != "":
 else:
     newWidth = nativeWidth
     newHeight = nativeHeight
-TrafficObject.imgHeight = newHeight
+TrafficObject.imgHeight = newHeight # Set the 
 TrafficObject.imgWidth = newWidth
 
 
