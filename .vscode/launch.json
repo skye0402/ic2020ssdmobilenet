@@ -5,19 +5,33 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Python: Current File",
+            "name": "Python: Traffic Tracking",
             "type": "python",
             "request": "launch",
-            "program": "${file}",
+            "program": "ic2020-multi-object-detection-cpu-tpu.py",
             "console": "integratedTerminal",
             "args": ["-m","./models/mobilenet_ssd_v2_coco_quant_postprocess_edgetpu.tflite",
             //"args": ["-m","./models/mobilenet_ssd_v2_coco_quant_postprocess_cpu.tflite",
                      "-f","900",
                      "-l","./models/coco_labels.txt",
                      "-v", "../../../Videos/VID_20200811_163721_1080p_30Hz_Bridge_ZoomX2_Inbound.mp4"
-                     "-o", "detectionVideo.avi"   
+                     //"-o", "detectionVideo.avi"   
                ,"-t"
                     ]
-        } 
+        },
+        {
+            "name": "Python: MQTT",
+            "type": "python",
+            "request": "launch",
+            "program": "mqtt-client-test.py",
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Python: Multiprocessing",
+            "type": "python",
+            "request": "launch",
+            "program": "multiprocessing-test.py",
+            "console": "integratedTerminal"
+        },
     ]
 }

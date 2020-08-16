@@ -11,9 +11,38 @@ import imutils
 from time import time
 from uuid import uuid4
 import platform
+import ssl
 import json
-import multiprocessing
 import paho.mqtt.client as mqtt
+import configparser
+
+config = configparser.ConfigParser(inline_comment_prefixes="#")
+config.read(['./config/tracker.ini', "./config/mqtt.ini"])
+
+# -------------- Parameters ------------------>>>
+# MQTT
+mqttServerUrl = config.get("server","mqttServerUrl")
+mqttServerPort = config.getint("server","mqttServerPort")
+pemCertFilePath = config.get("server","pemCertFilePath")
+sapIotDeviceID = config.get("devices","sapIotDeviceID")
+
+ackTopicLevel = config.get("topics","ackTopicLevel")
+measuresTopicLevel = config.get("topics","measuresTopicLevel")
+dummyMsg = '{{ "capabilityAlternateId": "vehiclespeed", "sensorAlternateId": "melbournevehicletracker0001", "measures": [{{"speed": "{}"}}] }}'
+
+# Open CV
+
+# Tracker
+trafficDict = {} # Contains the list of objects found
+trackerType = config.get("tracker","trackerType")
+ioUThreshold = config.getfloat("tracker","ioUThreshold")
+staleObject = config.getint("tracker","staleObject")
+detectionCredit = config.getint("tracker","detectionCredit")
+maxCredit = config.getint("tracker","maxCredit")
+detectionMissDebit = config.getint("tracker","detectionMissDebit")
+detectionConfidence = config.getfloat("tracker","detectionConfidence")
+maxTrackerBoxSize = config.getfloat("tracker","maxTrackerBoxSize")
+# -------------- Parameters ------------------<<<
 
 EDGETPU_SHARED_LIB = {
   'Linux': 'libedgetpu.so.1',
@@ -73,6 +102,36 @@ def resizeAndPadImage(image,size):
     color = [0, 0, 0]
     return cv2.copyMakeBorder(image, top, bottom, left, right, cv2.BORDER_CONSTANT, value=color)
 
+# The callback for when the client receives a CONNACK response from the server.
+def onConnect(client, userdata, flags, rc):
+    rcList = {
+        0: "Connection successful",
+        1: "Connection refused - incorrect protocol version",
+        2: "Connection refused - invalid client identifier",
+        3: "Connection refused - server unavailable",
+        4: "Connection refused - bad username or password",
+        5: "Connection refused",
+    }
+    print(rcList.get(rc, "Unknown server connection return code {}.".format(rc)))
+
+# The callback for when a PUBLISH message is received from the server.
+def onMessage(client, userdata, msg):
+    print(msg.topic+" "+str(msg.payload))
+
+# Send message to SAP MQTT Server
+def sendMessage(client, deviceID, messageContentJson):
+    client.publish(deviceID, messageContentJson)    
+
+def startMqttClient(deviceId):
+    client = mqtt.Client(deviceId) 
+    client.on_connect = onConnect
+    client.on_message = onMessage
+    client.tls_set(certfile=pemCertFilePath, cert_reqs=ssl.CERT_REQUIRED, tls_version=ssl.PROTOCOL_TLS, ciphers=None)
+    client.connect(mqttServerUrl, mqttServerPort)
+    client.subscribe(ackTopicLevel+sapIotDeviceID) #Subscribe to device ack topic (feedback given from SAP IoT MQTT Server)
+    client.loop_start() #Listening loop start
+    return client
+
 # this class holds the detected objects and tracks them
 class TrafficObject:
     # Class variables
@@ -94,6 +153,7 @@ class TrafficObject:
 
     # Destructor method
     def __del__(self):
+        sendMessage(mqttClient, measuresTopicLevel+sapIotDeviceID, dummyMsg.format(10)) # send some random values
         print("Object {} says good bye.".format(self.id))
     
     # Calculates the intersection over union (class method)
@@ -193,19 +253,7 @@ class TrafficObject:
             self.track.append(TrafficObject.__calcCenter(self.box)) # extend track
             return True
         else:
-            return False #tracker lost track
-
-# Tracker related code
-trafficDict = {} # Contains the list of objects found
-ioUThreshold = 0.33 # Intersection over Union threshold value
-staleObject = 30 # Amount of frames without detection (leads to object deletion)
-detectionCredit = 3 #points awarded for successful detection of object to tracker
-maxCredit = 50 # Maximum credit for a tracked object
-detectionMissDebit = 1 # points deducted for each round of video frame
-trackerType = "MEDIANFLOW" # Tracker to be used
-detectionConfidence = 0.55 # Needed score to consider detection
-maxTrackerBoxSize = 0.4 # Max ratio to screen width (avoids "ghost" trackers)
-# End of Tracker related code    
+            return False #tracker lost track 
 
 # construct the argument parser and parse the arguments
 ap = argparse.ArgumentParser()
@@ -217,8 +265,10 @@ ap.add_argument("-t", "--tpu", action="store_true", help="TPU is present/ should
 ap.add_argument("-f", "--format", default="", help="Video '<width>' format to be used for display and tracker and output")
 ap.add_argument("-hl", "--headless", action="store_true", help="Headless mode, no video output")
 ap.add_argument("-o", "--output", default="", help="write video to filename </file>")
-
 args = vars(ap.parse_args())
+
+# start MQTT client
+mqttClient = startMqttClient(sapIotDeviceID)
 
 # initialize the labels dictionary
 print("[INFO] parsing class labels...")
@@ -351,3 +401,5 @@ while True:
 if writeVideo: out.release()
 cv2.destroyAllWindows()
 vs.stop()
+mqttClient.loop_stop
+print("CV2 tasks and MQTT client stopped.")
