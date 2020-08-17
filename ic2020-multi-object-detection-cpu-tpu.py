@@ -25,10 +25,12 @@ mqttServerUrl = config.get("server","mqttServerUrl")
 mqttServerPort = config.getint("server","mqttServerPort")
 pemCertFilePath = config.get("server","pemCertFilePath")
 sapIotDeviceID = config.get("devices","sapIotDeviceID")
-
+sensorAlternateId = config.get("sensors","sensorAlternateId")
+capabilityAlternateId = config.get("sensors","capabilityAlternateId")
 ackTopicLevel = config.get("topics","ackTopicLevel")
 measuresTopicLevel = config.get("topics","measuresTopicLevel")
-dummyMsg = '{{ "capabilityAlternateId": "vehiclespeed", "sensorAlternateId": "melbournevehicletracker0001", "measures": [{{"speed": "{}"}}] }}'
+jsonvehicleDataMsg = config.get("messages", "vehicleData")
+#'{{ "capabilityAlternateId": "vehiclespeed", "sensorAlternateId": "melbournevehicletracker0001", "measures": [{{"speed": "{}"}}] }}'
 
 # Open CV
 
@@ -153,7 +155,8 @@ class TrafficObject:
 
     # Destructor method
     def __del__(self):
-        sendMessage(mqttClient, measuresTopicLevel+sapIotDeviceID, dummyMsg.format(10)) # send some random values
+        jsonMsg = self.__createMsg()
+        sendMessage(mqttClient, measuresTopicLevel+sapIotDeviceID, jsonMsg) # send the object data to SAP IoT
         print("Object {} says good bye.".format(self.id))
     
     # Calculates the intersection over union (class method)
@@ -254,6 +257,32 @@ class TrafficObject:
             return True
         else:
             return False #tracker lost track 
+
+    # Calculate speed
+    def __calcSpeed(self):
+        return 20.5
+
+    # Get Vehicle direction data
+    def  __getVehicleDirection(self):
+        return "Inbound", 179.5 # Verbal and angle, video frame up is north 0°
+
+    # Get vehicle class data
+    def __getVehicleClass(self):
+        return "car", 0.73, 0.93
+
+    # Get vehicle color
+    def __getVehicleColor(self):
+        return "undefined"
+
+    # Create MQTT message
+    def __createMsg(self):
+        vDirection,vAngle = self.__getVehicleDirection()
+        vClass, vClassAvg, vClassStdDev = self.__getVehicleClass()
+        vColor = self.__getVehicleColor()
+
+        return jsonvehicleDataMsg.format(capabilityAlternateId, sensorAlternateId,
+            self.id, vClass, self.__calcSpeed(), vAngle, vDirection, len(self.labels),
+            len(self.track), vClassAvg, vClassStdDev, vColor)
 
 # construct the argument parser and parse the arguments
 ap = argparse.ArgumentParser()
