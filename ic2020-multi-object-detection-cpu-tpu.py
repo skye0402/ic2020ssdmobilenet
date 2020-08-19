@@ -1,23 +1,24 @@
-# Multi-object tracking for traffic
+# Multi-object tracking for traffic Team 304 // Innovator Challenge 2020
 
 # import the necessary packages
 from edgetpu.detection.engine import DetectionEngine
 import tflite_runtime.interpreter as tflite
+import imutils
+from collections import Counter
 import cv2
-from imutils.video import FileVideoStream
 from PIL import Image
 import argparse
-import imutils
 from time import time
 from uuid import uuid4
 import platform
 import ssl
-import json
 import paho.mqtt.client as mqtt
 import configparser
+from sklearn.linear_model import LinearRegression
+import numpy as np
 
 config = configparser.ConfigParser(inline_comment_prefixes="#")
-config.read(['./config/tracker.ini', "./config/mqtt.ini"])
+config.read(['./config/tracker.ini', "./config/mqtt.ini", "./config/measurements.ini"])
 
 # -------------- Parameters ------------------>>>
 # MQTT
@@ -29,21 +30,29 @@ sensorAlternateId = config.get("sensors","sensorAlternateId")
 capabilityAlternateId = config.get("sensors","capabilityAlternateId")
 ackTopicLevel = config.get("topics","ackTopicLevel")
 measuresTopicLevel = config.get("topics","measuresTopicLevel")
-jsonvehicleDataMsg = config.get("messages", "vehicleData")
-#'{{ "capabilityAlternateId": "vehiclespeed", "sensorAlternateId": "melbournevehicletracker0001", "measures": [{{"speed": "{}"}}] }}'
+jsonvehicleDataMsg = config.get("messages", "vehicleData").replace("\n","")
 
 # Open CV
+# TODO: Need to replace some cmd-line args and move to config file
 
 # Tracker
 trafficDict = {} # Contains the list of objects found
 trackerType = config.get("tracker","trackerType")
 ioUThreshold = config.getfloat("tracker","ioUThreshold")
-staleObject = config.getint("tracker","staleObject")
-detectionCredit = config.getint("tracker","detectionCredit")
-maxCredit = config.getint("tracker","maxCredit")
-detectionMissDebit = config.getint("tracker","detectionMissDebit")
-detectionConfidence = config.getfloat("tracker","detectionConfidence")
+staleObject = config.getint("detector","staleObject")
+detectionCredit = config.getint("detector","detectionCredit")
+maxCredit = config.getint("detector","maxCredit")
+detectionMissDebit = config.getint("detector","detectionMissDebit")
+detectionConfidence = config.getfloat("detector","detectionConfidence")
 maxTrackerBoxSize = config.getfloat("tracker","maxTrackerBoxSize")
+classAnomalies = config.get("detector","classAnomalies")
+framesForSpeedCalc = config.getint("tracker","framesForSpeedCalc")
+
+# Measurements reference file for speed
+referenceLength = config.getfloat("image","referencelenght")
+trafficupdown = config.getboolean("image","trafficupdown")
+refImageFormat = eval(config.get("image","format"))
+pixelReference = eval(config.get("referencepoints","references"))
 # -------------- Parameters ------------------<<<
 
 EDGETPU_SHARED_LIB = {
@@ -139,9 +148,13 @@ class TrafficObject:
     # Class variables
     imgHeight = 0
     imgWidth = 0
+    pff = [] # Fitting factors (delivered by main program)
+    minPixel = 0 # Earliest/ latest measurement points
+    maxPixel = 0 
+    framesForSpeedCalc = 0 # last n frames to consider for speed calculation
 
     # Constructor method
-    def __init__(self, tTracker, bBox, classLabel, creditLimit, detectionMissDebit, maxCredit):
+    def __init__(self, tTracker, bBox, classLabel, creditLimit, detectionMissDebit, maxCredit, timestamp):
         self.id = str(uuid4()) # assign a unique ID
         self.tracker = tTracker
         self.box = bBox
@@ -151,7 +164,8 @@ class TrafficObject:
         self.detectionMissDebit = detectionMissDebit
         self.maxCredit = maxCredit
         self.track = []
-        self.track.append(TrafficObject.__calcCenter(bBox)) # start track
+        self.track.append((timestamp, TrafficObject.__calcCenter(bBox))) # start track
+        self.speed = 0.
 
     # Destructor method
     def __del__(self):
@@ -248,27 +262,62 @@ class TrafficObject:
         return (self.box[0], self.box[1]), (self.box[2], self.box[3])
 
     # Update tracker with new frame
-    def updateTracker(self, image):
+    def updateTracker(self, image, timestamp):
         ok, bbox = self.tracker.update(image)
         self.detectionCredit -= self.detectionMissDebit # We remove the credit from the last detection
         if ok:
             self.box = (int(bbox[0]), int(bbox[1]), int(bbox[0]+bbox[2]), int(bbox[1]+bbox[3]))
-            self.track.append(TrafficObject.__calcCenter(self.box)) # extend track
+            
+            self.track.append((timestamp, TrafficObject.__calcCenter(self.box))) # extend track
+            self.speed = self.__getSpeed(False, framesForSpeedCalc) # Try to get speed over last 4 measurements
             return True
         else:
             return False #tracker lost track 
 
     # Calculate speed
-    def __calcSpeed(self):
-        return 20.5
+    def __getSpeed(self, useAllData=False, nFrames = 2):
+        speed = 0
+        n = len(self.track)
+        if n>=nFrames: # Check we have sufficient measurements
+            if useAllData: # We measure from first trackpoint to current trackpoint (higher precision?)
+                for yP in self.track:
+                    y0 = yP[1][1] 
+                    t0 = yP[0]
+                    if y0 >= TrafficObject.minPixel and y0 <= TrafficObject.maxPixel: break
+                for yP in reversed(self.track):
+                    y1 = yP[1][1] 
+                    t1 = yP[0]
+                    if y1 >= TrafficObject.minPixel and y1 <= TrafficObject.maxPixel: break
+            else:
+                y0 = self.track[n-nFrames][1][1]        
+                t0 = self.track[n-nFrames][0]
+                y1 = self.track[n-1][1][1]
+                t1 = self.track[n-1][0]
+            # Inside reference boundaries:
+            if y0>=TrafficObject.minPixel and y0<=TrafficObject.maxPixel and y1>=TrafficObject.minPixel and y1<=TrafficObject.maxPixel: 
+                distance = abs(np.polyval(TrafficObject.pff, y0) - np.polyval(TrafficObject.pff, y1)) # interpolated distance in meters
+                timeTravelled = (t1 - t0) / 1000 # time in seconds
+                speed = (distance / timeTravelled) # speed in m/s
+                return speed
+            else:
+                return self.speed # use last possible calculation
+        else:
+            return self.speed
+
+    # Public method to get speed
+    def getSpeed(self):
+        return self.speed
 
     # Get Vehicle direction data
     def  __getVehicleDirection(self):
         return "Inbound", 179.5 # Verbal and angle, video frame up is north 0°
 
     # Get vehicle class data
-    def __getVehicleClass(self):
-        return "car", 0.73, 0.93
+    def getVehicleClass(self):
+        histogram = Counter(self.labels)
+        percentHistogram = [(i, histogram[i] / len(self.labels)) for i in histogram]
+        vClass, vClConf = percentHistogram[0]
+        return vClass, vClConf, 0.0
 
     # Get vehicle color
     def __getVehicleColor(self):
@@ -277,11 +326,11 @@ class TrafficObject:
     # Create MQTT message
     def __createMsg(self):
         vDirection,vAngle = self.__getVehicleDirection()
-        vClass, vClassAvg, vClassStdDev = self.__getVehicleClass()
+        vClass, vClassAvg, vClassStdDev = self.getVehicleClass()
         vColor = self.__getVehicleColor()
 
         return jsonvehicleDataMsg.format(capabilityAlternateId, sensorAlternateId,
-            self.id, vClass, self.__calcSpeed(), vAngle, vDirection, len(self.labels),
+            self.id, vClass, self.__getSpeed(True), vAngle, vDirection, len(self.labels),
             len(self.track), vClassAvg, vClassStdDev, vColor)
 
 # construct the argument parser and parse the arguments
@@ -321,10 +370,10 @@ networkSize = input_details[0]['shape'].max()
 # initialize the video stream and allow the camera sensor to warmup
 print("[INFO] starting video stream...")
 
-# Load the video
-vs = FileVideoStream(args["video"]).start()
+# Start the video processing
+vs = cv2.VideoCapture(args["video"])
 orig = vs.read()
-nativeHeight, nativeWidth, _ = orig.shape
+nativeHeight, nativeWidth, _ = orig[1].shape
 
 # Calculate new format if needed
 if args["format"] != "":
@@ -334,9 +383,18 @@ if args["format"] != "":
 else:
     newWidth = nativeWidth
     newHeight = nativeHeight
-TrafficObject.imgHeight = newHeight # Set the 
+TrafficObject.imgHeight = newHeight # Set the format of the frame
 TrafficObject.imgWidth = newWidth
 
+# Calculate fitting for distance measurement
+referenceDataList = np.asarray(pixelReference, dtype=np.float)
+pixelY = referenceDataList[:,1] # Get height reference pixels (Y-Axis)
+meterScale = np.linspace(0, referenceLength*(len(pixelReference)-1), len(pixelReference)) # Create meter-scale
+polyFitFactors = np.polyfit(pixelY, meterScale, 4) #Polynominal fitting of n-th grade
+TrafficObject.pff = polyFitFactors # Send to class variable
+TrafficObject.minPixel = min(pixelY)
+TrafficObject.maxPixel = max(pixelY)
+TrafficObject.framesForSpeedCalc = framesForSpeedCalc
 
 # Optional: write video out
 writeVideo = False
@@ -346,10 +404,10 @@ if args["output"] != "":
     out = cv2.VideoWriter(args["output"], fourcc, 20.0, (newWidth,newHeight))
 
 # loop over the frames from the video stream
-while True:
+while vs.isOpened():
 	# grab the frame from the threaded video stream and resize it
 	# to have a maximum width of x pixels
-    orig = vs.read()
+    ok, orig = vs.read()
     start = time()
     fpstimer = cv2.getTickCount()
     if args["format"] != "": orig = cv2.resize(orig,(newWidth, newHeight)) #Bi-linear interpolation as default
@@ -366,7 +424,8 @@ while True:
     
     # Update active trackers
     for objectID in list(trafficDict):
-        ok = trafficDict[objectID].updateTracker(orig)
+        timestamp = vs.get(cv2.CAP_PROP_POS_MSEC)
+        ok = trafficDict[objectID].updateTracker(orig, timestamp)
         if not ok:
             del trafficDict[objectID] #remove the tracker
 
@@ -389,7 +448,8 @@ while True:
                 objectFound = True
 
         if objectFound == False: #No matching tracker, let's add a new tracker
-            tObject = TrafficObject(TrafficObject.createTracker(trackerType), box, label, staleObject, detectionMissDebit, maxCredit)
+            timestamp = vs.get(cv2.CAP_PROP_POS_MSEC)
+            tObject = TrafficObject(TrafficObject.createTracker(trackerType), box, label, staleObject, detectionMissDebit, maxCredit, timestamp)
             tObject.tracker.init(orig, tBox)
             trafficDict[tObject.getId] = tObject
 
@@ -400,7 +460,11 @@ while True:
             startXY, endXY = trafficDict[objectID].getBBoxCoord()
             cv2.rectangle(orig, startXY, endXY, (0, 255, 0), 1)
             y = startXY[1] - 15 if startXY[1] - 15 > 15 else startXY[1] + 15
-            text = "{} ID {}: {}% credit".format(label, trafficDict[objectID].getId()[-4:] , trafficDict[objectID].getCredit())
+            vClass, _, _ = trafficDict[objectID].getVehicleClass() # Class of car
+            vId = trafficDict[objectID].getId()[-4:] # Vehicle ID (last 4 digits)
+            vSpeed = trafficDict[objectID].getSpeed()
+            vCredit = trafficDict[objectID].getCredit() # Show internal trust into tracked object
+            text = "{0!s} ID{1!s}: v={2:2.1f}km/h {3:d}% credit".format(vClass, vId , vSpeed*3.6, vCredit)
             cv2.putText(orig, text, (startXY[0], y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
     # Tracker handling ends here
 
@@ -429,6 +493,6 @@ while True:
 # do a bit of cleanup
 if writeVideo: out.release()
 cv2.destroyAllWindows()
-vs.stop()
+vs.release()
 mqttClient.loop_stop
 print("CV2 tasks and MQTT client stopped.")

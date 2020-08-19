@@ -23,15 +23,33 @@
             "name": "Python: MQTT",
             "type": "python",
             "request": "launch",
-            "program": "mqtt-client-test.py",
+            "program": "./playground/mqtt-client-test.py",
             "console": "integratedTerminal"
         },
         {
             "name": "Python: Multiprocessing",
             "type": "python",
             "request": "launch",
-            "program": "multiprocessing-test.py",
+            "program": "./playground/multiprocessing-test.py",
             "console": "integratedTerminal"
         },
+        {
+            "name": "Python: linear regression",
+            "type": "python",
+            "request": "launch",
+            "program": "./playground/linear-regression.py",
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Python: Image calibration tool",
+            "type": "python",
+            "request": "launch",
+            "program": "ic2020-image-calibration.py",
+            "console": "integratedTerminal",
+            "args": [
+                         "-f","900",
+                         "-v", "../../../Videos/VID_20200811_163721_1080p_30Hz_Bridge_ZoomX2_Inbound.mp4"
+                    ]
+        }
     ]
 }
