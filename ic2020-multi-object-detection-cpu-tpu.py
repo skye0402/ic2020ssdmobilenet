@@ -16,6 +16,7 @@ import paho.mqtt.client as mqtt
 import configparser
 from sklearn.linear_model import LinearRegression
 import numpy as np
+from os.path import basename 
 
 config = configparser.ConfigParser(inline_comment_prefixes="#")
 config.read(['./config/tracker.ini', "./config/mqtt.ini", "./config/measurements.ini"])
@@ -47,12 +48,6 @@ detectionConfidence = config.getfloat("detector","detectionConfidence")
 maxTrackerBoxSize = config.getfloat("tracker","maxTrackerBoxSize")
 classAnomalies = config.get("detector","classAnomalies")
 framesForSpeedCalc = config.getint("tracker","framesForSpeedCalc")
-
-# Measurements reference file for speed
-referenceLength = config.getfloat("image","referencelenght")
-trafficupdown = config.getboolean("image","trafficupdown")
-refImageFormat = eval(config.get("image","format"))
-pixelReference = eval(config.get("referencepoints","references"))
 # -------------- Parameters ------------------<<<
 
 EDGETPU_SHARED_LIB = {
@@ -344,6 +339,14 @@ ap.add_argument("-f", "--format", default="", help="Video '<width>' format to be
 ap.add_argument("-hl", "--headless", action="store_true", help="Headless mode, no video output")
 ap.add_argument("-o", "--output", default="", help="write video to filename </file>")
 args = vars(ap.parse_args())
+
+#Get Filename which will be the key later in the config file
+fileName = basename(args["video"]) 
+# Measurements reference file for speed
+referenceLength = config.getfloat(fileName, "referencelenght")
+trafficupdown = config.getboolean(fileName, "trafficupdown")
+refImageFormat = eval(config.get(fileName, "format"))
+pixelReference = eval(config.get(fileName, "references"))
 
 # start MQTT client
 mqttClient = startMqttClient(sapIotDeviceID)

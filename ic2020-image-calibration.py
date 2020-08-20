@@ -4,6 +4,7 @@ from imutils.video import FileVideoStream
 import PySimpleGUI as sg
 import argparse
 import configparser
+from os.path import basename 
 
 mouse_pressed = False
 
@@ -28,6 +29,8 @@ ap = argparse.ArgumentParser()
 ap.add_argument("-v", "--video", required=True, help="filename of video for detection")
 ap.add_argument("-f", "--format", default="", help="Video '<width>' format to be used for display and tracker and output")
 args = vars(ap.parse_args())
+
+fileName = basename(args["video"]) #Get Filename which will be the key later in the config file
 
 config = configparser.ConfigParser()
 config.read(configFile) #Read existing configuration
@@ -81,10 +84,15 @@ while True:
 
     if k == ord("s"): 
         # Save measurements
-        config.set("image", "format", str((newWidth, newHeight)))
-        config.set("image","trafficUpDown", str(upDown))
-        config.set("image","referenceLenght", str(referenceLength))
-        config.set("referencepoints","references",str(referenceInPixels))
+        try: #check if filename section exists
+            config.set(fileName, "format", str((newWidth, newHeight)))
+            break
+        except Exception as excpt:#NoSectionError:
+            config.add_section(fileName)
+            config.set(fileName, "format", str((newWidth, newHeight)))
+        config.set(fileName, "trafficUpDown", str(upDown))
+        config.set(fileName, "referenceLenght", str(referenceLength))
+        config.set(fileName, "references",str(referenceInPixels))
         with open(configFile, 'w') as configfile:
             config.write(configfile)
         break
