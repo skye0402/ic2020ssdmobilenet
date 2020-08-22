@@ -85,24 +85,47 @@ def invokeInterpreter(interpreter, inputdetails, outputdetails, image):
     #num = interpreter.get_tensor(output_details[3]['index'])[0]  # Total number of detected objects (inaccurate and not needed)
     return boxes, classes, scores
 
-def getBoundingBox(boxData, newWidth, newHeight):
+def getBoundingBox(boxData, newWidth, newHeight, detectorImageRectangle):
     (startY, startX, endY, endX) = boxData
-    startX = 0 if startX < 0 else int(startX * newWidth)
-    startY = 0 if startY < 0 else int(startY * newWidth - ((newWidth - newHeight)/2))
-    endX = 0 if endX < 0 else int(endX * newWidth)
-    endY = 0 if endY < 0 else int(endY * newWidth - ((newWidth - newHeight)/2))
+    # Calculate the detection boxes based on the detector image
+    x0,y0 = detectorImageRectangle[0]
+    x1,y1 = detectorImageRectangle[1]
+
+    detectorWidth = x1-x0
+    detectorHeight = y1-y0
+
+    refX = newWidth - x0
+    refY = newHeight - y0
+
+    startX = 0 if startX < 0 else int(startX * detectorWidth) + x0
+    startY = 0 if startY < 0 else int(startY * detectorWidth - ((detectorWidth - detectorHeight)/2)) + y0
+    endX = 0 if endX < 0 else int(endX * detectorWidth) + x0
+    endY = 0 if endY < 0 else int(endY * detectorWidth - ((detectorWidth - detectorHeight)/2)) + y0
     return (startX, startY, endX, endY)
 
-def resizeAndPadImage(image,size):
-    old_size = image.shape[:2] # old_size is in (height, width) format
-    ratio = float(size)/max(old_size)
-    new_size = tuple([int(x*ratio) for x in old_size])
+def resizeAndPadImage(image, maskImg, networkSize, detectorImageRectangle):
+    # 1. Apply mask to image
+    maskedImage = cv2.bitwise_and(image,image, mask=maskImg)
+    # cv2.imshow("ROI", maskedImage)
+    # k = cv2.waitKey(0)
+
+    # 2. Cut detector rectangle out of image
+    x0,y0 = detectorImageRectangle[0]
+    x1,y1 = detectorImageRectangle[1]
+    detectorImage = maskedImage[y0:y1,x0:x1]
+    # cv2.imshow("ROI", detectorImage)
+    # k = cv2.waitKey(0)
+
+    # 3. Create the padded, masked, sub-image for the detector network
+    detectorSize = detectorImage.shape[:2]
+    ratio = float(networkSize)/max(detectorSize)
+    new_size = tuple([int(x*ratio) for x in detectorSize])
 
     # new_size should be in (width, height) format
-    image = cv2.resize(image, (new_size[1], new_size[0]))
+    image = cv2.resize(detectorImage, (new_size[1], new_size[0]))
 
-    delta_w = size - new_size[1]
-    delta_h = size - new_size[0]
+    delta_w = networkSize - new_size[1]
+    delta_h = networkSize - new_size[0]
     top, bottom = delta_h//2, delta_h-(delta_h//2)
     left, right = delta_w//2, delta_w-(delta_w//2)
     color = [0, 0, 0]
@@ -147,6 +170,8 @@ class TrafficObject:
     minPixel = 0 # Earliest/ latest measurement points
     maxPixel = 0 
     framesForSpeedCalc = 0 # last n frames to consider for speed calculation
+    maxXBoundary = 0 #Coordinate where tracker should stop
+    maxYBoundary = 0 #set by main program
 
     # Constructor method
     def __init__(self, tTracker, bBox, classLabel, creditLimit, detectionMissDebit, maxCredit, timestamp):
@@ -242,7 +267,7 @@ class TrafficObject:
     def isGone(self):
         objectIsGone = False
         (cX, cY) = TrafficObject.__calcCenter(self.box)
-        if (cX >= (TrafficObject.imgWidth)*0.9) or (cY >= (TrafficObject.imgHeight)*0.9) or (cX <= 0) or (cY <= 0):
+        if (cX >= TrafficObject.maxXBoundary) or (cY >= TrafficObject.maxYBoundary) or (cX <= 0) or (cY <= 0):
             objectIsGone = True
         return objectIsGone
 
@@ -345,8 +370,9 @@ fileName = basename(args["video"])
 # Measurements reference file for speed
 referenceLength = config.getfloat(fileName, "referencelenght")
 trafficupdown = config.getboolean(fileName, "trafficupdown")
-refImageFormat = eval(config.get(fileName, "format"))
-pixelReference = eval(config.get(fileName, "references"))
+distanceReference = eval(config.get(fileName, "references"))
+regionOfInterest = eval(config.get(fileName, "roi"))
+detectorReference = eval(config.get(fileName, "detectorframe"))
 
 # start MQTT client
 mqttClient = startMqttClient(sapIotDeviceID)
@@ -389,6 +415,23 @@ else:
 TrafficObject.imgHeight = newHeight # Set the format of the frame
 TrafficObject.imgWidth = newWidth
 
+# Calculate float data from config file to pixel data for chosen format
+pixelReference = []
+for pointXY in distanceReference:
+    pixelReference.append((round(pointXY[0]*newWidth), round(pointXY[1]*newHeight)))
+
+detectorinPixel = []
+for pointXY in detectorReference:
+    detectorinPixel.append((round(pointXY[0]*newWidth), round(pointXY[1]*newHeight)))
+
+roiInPixel = []
+for pointXY in regionOfInterest:
+    roiInPixel.append((round(pointXY[0]*newWidth), round(pointXY[1]*newHeight)))
+
+# Create mask image from configuration file
+maskImage = np.zeros((newHeight,newWidth), dtype=np.uint8)
+cv2.fillPoly(maskImage, [np.array(roiInPixel)], 1)
+
 # Calculate fitting for distance measurement
 referenceDataList = np.asarray(pixelReference, dtype=np.float)
 pixelY = referenceDataList[:,1] # Get height reference pixels (Y-Axis)
@@ -398,6 +441,7 @@ TrafficObject.pff = polyFitFactors # Send to class variable
 TrafficObject.minPixel = min(pixelY)
 TrafficObject.maxPixel = max(pixelY)
 TrafficObject.framesForSpeedCalc = framesForSpeedCalc
+TrafficObject.maxXBoundary, TrafficObject.maxYBoundary = detectorinPixel[1] # Tracker ends here
 
 # Optional: write video out
 writeVideo = False
@@ -414,7 +458,9 @@ while vs.isOpened():
     start = time()
     fpstimer = cv2.getTickCount()
     if args["format"] != "": orig = cv2.resize(orig,(newWidth, newHeight)) #Bi-linear interpolation as default
-    frame = resizeAndPadImage(orig, networkSize)
+    frame = resizeAndPadImage(orig, maskImage, networkSize, detectorinPixel)
+    # cv2.imshow("New detector image", frame)
+    # cv2.waitKey(0)
     conv_time = time() - start #Time to convert the frame
     
 	# from BGR to RGB channel ordering 
@@ -436,7 +482,7 @@ while vs.isOpened():
     for index, conf in enumerate(scores):
         if not ((conf > detectionConfidence) and (conf <= 1.0) and (int(classes[index]) < 8)): break
         # extract the bounding box and predicted class label
-        box = getBoundingBox(boxes[index].flatten(), newWidth, newHeight)      
+        box = getBoundingBox(boxes[index].flatten(), newWidth, newHeight, detectorinPixel)      
         label = labels[classes[index].astype("int")]
         startX, startY, endX, endY = box
         if (float(endX-startX)/newWidth) > maxTrackerBoxSize: break # Skips unlikely big detections

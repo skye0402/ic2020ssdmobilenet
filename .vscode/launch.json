@@ -47,7 +47,7 @@
             "program": "ic2020-image-calibration.py",
             "console": "integratedTerminal",
             "args": [
-                         "-f","900",
+                         "-f","1920",
                          "-v", "../../../Videos/Inbound_Bridge_Melbourne04.mp4"
                     ]
         },
@@ -58,7 +58,7 @@
             "program": "ic2020-roi-definition.py",
             "console": "integratedTerminal",
             "args": [
-                         "-f","900",
+                         "-f","1920",
                          "-v", "../../../Videos/Inbound_Bridge_Melbourne04.mp4"
                     ]
         }

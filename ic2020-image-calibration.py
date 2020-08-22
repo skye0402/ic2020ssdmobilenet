@@ -84,15 +84,18 @@ while True:
 
     if k == ord("s"): 
         # Save measurements
+        # Convert into float to have it independent of image size
+        floatReference = []
+        for pointXY in referenceInPixels:
+            floatReference.append((float(pointXY[0]/newWidth), float(pointXY[1]/newHeight)))
+
         try: #check if filename section exists
-            config.set(fileName, "format", str((newWidth, newHeight)))
-            break
+            config.set(fileName, "trafficUpDown", str(upDown))
         except Exception as excpt:#NoSectionError:
             config.add_section(fileName)
-            config.set(fileName, "format", str((newWidth, newHeight)))
-        config.set(fileName, "trafficUpDown", str(upDown))
+            config.set(fileName, "trafficUpDown", str(upDown))
         config.set(fileName, "referenceLenght", str(referenceLength))
-        config.set(fileName, "references",str(referenceInPixels))
+        config.set(fileName, "references",str(floatReference))
         with open(configFile, 'w') as configfile:
             config.write(configfile)
         break

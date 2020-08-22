@@ -10,7 +10,7 @@ mouse_pressed = False
 
 # Variables for the config file
 referenceLength = 0.0
-referenceInPixels = []
+roiPolygon = []
 upDown = True # Left/Right = False
 imageSize = 0 # Width (leftRight) or Height (upDown)
 configFile = "./config/measurements.ini"
@@ -18,10 +18,13 @@ configFile = "./config/measurements.ini"
 def mouse_callback(event, x, y, flags, param):
     global image_to_show, s_x, s_y, e_x, e_y, mouse_pressed
     if event == cv2.EVENT_LBUTTONDOWN:
-        mouse_pressed = True
-        cv2.circle(image_to_show, (x,y), 3, (0, 255, 0))
-        print(x,y)
-        referenceInPixels.append((x,y))
+        mouse_pressed = True        
+        if len(roiPolygon)<4:
+            print(x,y)
+            cv2.circle(image_to_show, (x,y), 3, (0, 255, 0))
+            roiPolygon.append((x,y))
+        else:
+            print("Press V to preview, press R to reset.")
         
 # Main program
 # construct the argument parser and parse the arguments
@@ -34,29 +37,6 @@ fileName = basename(args["video"]) #Get Filename which will be the key later in 
 
 config = configparser.ConfigParser()
 config.read(configFile) #Read existing configuration
-
-# # construct the gui
-# layout = [  [sg.Text("This tool is to create a measurement reference. You need to mark at least 2 identical lengths.")],
-#             [sg.Text("What will the reference length be in meter?"), sg.InputText(key="-LENGTH-")],
-#             [sg.Button("Ok"), sg.Button("Cancel")] ]
-
-# # Create the Window
-
-# window = sg.Window("IC2020 - Measurement tool for roads to determine speed", layout)
-# while True:
-#     event, values = window.read()
-#     if event == sg.WIN_CLOSED or event == "Cancel":	# if user closes window or clicks cancel
-#         print("Leaving program.")
-#         quit()
-#     if values["-LENGTH-"].isnumeric():
-#         if float(values["-LENGTH-"]) > 0:
-
-#             print("You entered ", values["-LENGTH-"],"m.")
-#             referenceLength = float(values["-LENGTH-"])
-#             window.close()
-#             break
-#     else:
-#         window['-LENGTH-']('')
 
 # Load video
 vs = FileVideoStream(args["video"]).start()
@@ -84,19 +64,44 @@ while True:
 
     if k == ord("s"): 
         # Save measurements
+        floatRoi = []
+        for pointXY in regionOfInterest:
+            floatRoi.append((float(pointXY[0]/newWidth), float(pointXY[1]/newHeight)))
+
         try: #check if filename section exists
-            config.set(fileName, "format", str((newWidth, newHeight)))
-            break
+            config.set(fileName, "roi", str(floatRoi))
         except Exception as excpt:#NoSectionError:
             config.add_section(fileName)
-            config.set(fileName, "format", str((newWidth, newHeight)))
-        config.set(fileName, "trafficUpDown", str(upDown))
-        config.set(fileName, "referenceLenght", str(referenceLength))
-        config.set(fileName, "references",str(referenceInPixels))
+            config.set(fileName, "roi", str(floatRoi))
+
+        # Get the frame for the detector to maximize the network resolution
+        minX = float(min(regionOfInterest, key=lambda item:item[0])[0] / newWidth)
+        minY = float(min(regionOfInterest, key=lambda item:item[1])[1] / newHeight)
+        maxX = float(max(regionOfInterest, key=lambda item:item[0])[0] / newWidth)
+        maxY = float(max(regionOfInterest, key=lambda item:item[1])[1] / newHeight)
+
+        config.set(fileName, "detectorFrame", str([(minX, minY),(maxX, maxY)]))
         with open(configFile, 'w') as configfile:
             config.write(configfile)
         break
-    elif k == 27:
+    elif k == ord("v"):
+        # Preview the ROI
+        mask = np.zeros((newHeight,newWidth), dtype=np.uint8)
+        regionOfInterest = roiPolygon
+        cv2.fillPoly(mask, [np.array(regionOfInterest)], 1)
+        image_to_show = np.copy(frame)
+        newImage = cv2.bitwise_and(image_to_show,image_to_show, mask=mask)
+        #cv2.copyTo(image_to_show, mask)q
+        cv2.imshow("ROI", newImage)
+    elif k == ord("r"):
+        # Reset the points
+        cv2.destroyWindow("ROI")
+        roiPolygon = []
+        image_to_show = np.copy(frame)
+        cv2.imshow("image", image_to_show)
+        print("Reset the points, please start over.")
+    elif (k == 27) or (k == ord("q")):
         break
+
 
 cv2.destroyAllWindows()        
