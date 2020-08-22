@@ -242,7 +242,7 @@ class TrafficObject:
     def isGone(self):
         objectIsGone = False
         (cX, cY) = TrafficObject.__calcCenter(self.box)
-        if (cX >= TrafficObject.imgWidth) or (cY >= TrafficObject.imgHeight) or (cX <= 0) or (cY <= 0):
+        if (cX >= (TrafficObject.imgWidth)*0.9) or (cY >= (TrafficObject.imgHeight)*0.9) or (cX <= 0) or (cY <= 0):
             objectIsGone = True
         return objectIsGone
 

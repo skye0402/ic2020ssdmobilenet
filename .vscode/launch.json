@@ -14,7 +14,7 @@
             //"args": ["-m","./models/mobilenet_ssd_v2_coco_quant_postprocess_cpu.tflite",
                      "-f","900",
                      "-l","./models/coco_labels.txt",
-                     "-v", "../../../Videos/VID_20200811_163721_1080p_30Hz_Bridge_ZoomX2_Inbound.mp4"
+                     "-v", "../../../Videos/Inbound_Bridge_Melbourne04.mp4"
                      //"-o", "detectionVideo.avi"   
                ,"-t"
                     ]
@@ -48,7 +48,18 @@
             "console": "integratedTerminal",
             "args": [
                          "-f","900",
-                         "-v", "../../../Videos/VID_20200811_163721_1080p_30Hz_Bridge_ZoomX2_Inbound.mp4"
+                         "-v", "../../../Videos/Inbound_Bridge_Melbourne04.mp4"
+                    ]
+        },
+        {
+            "name": "Python: ROI definition tool",
+            "type": "python",
+            "request": "launch",
+            "program": "ic2020-roi-definition.py",
+            "console": "integratedTerminal",
+            "args": [
+                         "-f","900",
+                         "-v", "../../../Videos/Inbound_Bridge_Melbourne04.mp4"
                     ]
         }
     ]

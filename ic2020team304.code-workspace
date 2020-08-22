@@ -1,0 +1,28 @@
+{
+	"folders": [
+		{
+			"path": "."
+		}
+	],
+	"settings": {
+		"sqltools.connections": [
+			{
+				"connectionTimeout": 30,
+				"database": "74C50A702BB94AAABACB6AAC64D9C9D7",
+				"driver": "SAPHana",
+				"hanaOptions": {
+					"encrypt": true,
+					"sslCryptoProvider": "openssl",
+					"sslValidateCertificate": true
+				},
+				"name": "HANA4IC2020Team304",
+				"password": "Ge8XK1LD99.6IMb2vXaMZcnMWjWXy00GP3RU-7lkdURqBOIcFHVBsFSvFgYo8geU_VC8ujVA3xd3vXuQH7ZgLu793Hrg5YyeTWzXhf.MlOKcpew.C2qwaCUnUFNB.YFi",
+				"port": 31901,
+				"previewLimit": 50,
+				"server": "zeus.hana.prod.eu-central-1.whitney.dbaas.ondemand.com",
+				"username": "74C50A702BB94AAABACB6AAC64D9C9D7_82ZDFT426DT8ANICC0V2FF1QU_RT"
+			}
+		],
+		"sqltools.useNodeRuntime": true
+	}
+}
