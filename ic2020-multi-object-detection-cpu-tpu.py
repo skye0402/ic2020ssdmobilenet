@@ -48,6 +48,7 @@ detectionConfidence = config.getfloat("detector","detectionConfidence")
 maxTrackerBoxSize = config.getfloat("tracker","maxTrackerBoxSize")
 classAnomalies = config.get("detector","classAnomalies")
 framesForSpeedCalc = config.getint("tracker","framesForSpeedCalc")
+allowedClasses = eval(config.get("classes","allowedClass"))
 # -------------- Parameters ------------------<<<
 
 EDGETPU_SHARED_LIB = {
@@ -172,6 +173,8 @@ class TrafficObject:
     framesForSpeedCalc = 0 # last n frames to consider for speed calculation
     maxXBoundary = 0 #Coordinate where tracker should stop
     maxYBoundary = 0 #set by main program
+    labels = [] # Labels for the classes
+    allowedClasses = [] # Classes to be considered
 
     # Constructor method
     def __init__(self, tTracker, bBox, classLabel, creditLimit, detectionMissDebit, maxCredit, timestamp):
@@ -233,6 +236,14 @@ class TrafficObject:
             newTracker = cv2.TrackerCSRT_create()
         return newTracker
 
+    # Get class
+    def getClassName(classID):
+        return labels[classID]
+
+    # Is class in scope?
+    def isClassRelevant(classID):
+        return TrafficObject.getClassName(classID) in TrafficObject.allowedClasses
+        
     # Get IoU of tracker box vs detection
     def getIoU(self, boxInput):        
         return self.__calcIoU(boxInput, self.__getBBox())
@@ -289,7 +300,7 @@ class TrafficObject:
             self.box = (int(bbox[0]), int(bbox[1]), int(bbox[0]+bbox[2]), int(bbox[1]+bbox[3]))
             
             self.track.append((timestamp, TrafficObject.__calcCenter(self.box))) # extend track
-            self.speed = self.__getSpeed(False, framesForSpeedCalc) # Try to get speed over last 4 measurements
+            self.speed = self.__getSpeed(True) # Try to get speed over last 4 measurements
             return True
         else:
             return False #tracker lost track 
@@ -386,6 +397,8 @@ for row in open(args["labels"]):
 	# unpack the row and update the labels dictionary
 	(classID, label) = row.strip().split(maxsplit=1)
 	labels[int(classID)] = label.strip()
+TrafficObject.labels = labels
+TrafficObject.allowedClasses = allowedClasses
 
 # load the tflite detection model
 print("[INFO] loading model into TF Lite...")
@@ -450,26 +463,25 @@ if args["output"] != "":
     fourcc = cv2.VideoWriter_fourcc(*'DIVX') #(*'MP42')
     out = cv2.VideoWriter(args["output"], fourcc, 20.0, (newWidth,newHeight))
 
+start = time()
 # loop over the frames from the video stream
 while vs.isOpened():
 	# grab the frame from the threaded video stream and resize it
 	# to have a maximum width of x pixels
     ok, orig = vs.read()
-    start = time()
+    if not ok: #End of video reached
+        break
     fpstimer = cv2.getTickCount()
     if args["format"] != "": orig = cv2.resize(orig,(newWidth, newHeight)) #Bi-linear interpolation as default
     frame = resizeAndPadImage(orig, maskImage, networkSize, detectorinPixel)
     # cv2.imshow("New detector image", frame)
     # cv2.waitKey(0)
-    conv_time = time() - start #Time to convert the frame
     
 	# from BGR to RGB channel ordering 
     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
 	# carry out detections on the input frame
-    start = time()
     boxes, classes, scores = invokeInterpreter(interpreter, input_details[0]['index'], output_details, frame)
-    inf_time = time() - start # time for inference
     
     # Update active trackers
     for objectID in list(trafficDict):
@@ -480,10 +492,10 @@ while vs.isOpened():
 
     # loop over the confidence results
     for index, conf in enumerate(scores):
-        if not ((conf > detectionConfidence) and (conf <= 1.0) and (int(classes[index]) < 8)): break
+        if not ((conf > detectionConfidence) and (conf <= 1.0) and (TrafficObject.isClassRelevant(int(classes[index])))): break
         # extract the bounding box and predicted class label
         box = getBoundingBox(boxes[index].flatten(), newWidth, newHeight, detectorinPixel)      
-        label = labels[classes[index].astype("int")]
+        label = TrafficObject.getClassName(classes[index].astype("int"))
         startX, startY, endX, endY = box
         if (float(endX-startX)/newWidth) > maxTrackerBoxSize: break # Skips unlikely big detections
            
@@ -528,8 +540,8 @@ while vs.isOpened():
     # show the output frame and wait for a key press
     if not args["headless"]:
         cv2.imshow("Frame", orig)
-    else:
-        print(text)
+    # else:
+    #     print(text)
     key = cv2.waitKey(1) & 0xFF
     
     # Optional: write video
@@ -540,6 +552,8 @@ while vs.isOpened():
         break
 
 # do a bit of cleanup
+overall_time = time() - start #Time to convert the frame
+print(overall_time)
 if writeVideo: out.release()
 cv2.destroyAllWindows()
 vs.release()

@@ -12,10 +12,11 @@
             "console": "integratedTerminal",
             "args": ["-m","./models/mobilenet_ssd_v2_coco_quant_postprocess_edgetpu.tflite",
             //"args": ["-m","./models/mobilenet_ssd_v2_coco_quant_postprocess_cpu.tflite",
-                     "-f","900",
+                     "-f","1280",
                      "-l","./models/coco_labels.txt",
-                     "-v", "../../../Videos/Inbound_Bridge_Melbourne04.mp4"
-                     //"-o", "detectionVideo.avi"   
+                     "-v", "../../../Videos/VID_20200824_082156_1080p_30Hz_Bridge_ZoomX2_Inbound.mp4"
+                     //,"-o", "VID_20200824_082156_1080p_30Hz_Bridge_ZoomX2_Inbound.avi"   
+                     ,"-hl"
                ,"-t"
                     ]
         },
@@ -48,7 +49,7 @@
             "console": "integratedTerminal",
             "args": [
                          "-f","1920",
-                         "-v", "../../../Videos/Inbound_Bridge_Melbourne04.mp4"
+                         "-v", "../../../Videos/VID_20200824_082156_1080p_30Hz_Bridge_ZoomX2_Inbound.mp4"
                     ]
         },
         {
@@ -59,7 +60,7 @@
             "console": "integratedTerminal",
             "args": [
                          "-f","1920",
-                         "-v", "../../../Videos/Inbound_Bridge_Melbourne04.mp4"
+                         "-v", "../../../Videos/VID_20200824_082156_1080p_30Hz_Bridge_ZoomX2_Inbound.mp4"
                     ]
         }
     ]
