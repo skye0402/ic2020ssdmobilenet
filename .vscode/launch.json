@@ -69,7 +69,7 @@
             "name": "Python: ZMQ Publisher",
             "type": "python",
             "request": "launch",
-            "program": "./zmqpublisher.py",
+            "program": "ic2020-zmq-publisher.py",
             "console": "integratedTerminal",
             "args": [
                          "-s","odroid.fritz.box",
