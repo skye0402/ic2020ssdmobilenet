@@ -17,6 +17,9 @@ import configparser
 from sklearn.linear_model import LinearRegression
 import numpy as np
 from os.path import basename 
+import threading
+import socket
+import imagezmq
 
 def make_interpreter(tpu, model_file):
     if tpu:
@@ -122,6 +125,71 @@ def startMqttClient(deviceId):
     client.subscribe(ackTopicLevel+sapIotDeviceID) #Subscribe to device ack topic (feedback given from SAP IoT MQTT Server)
     client.loop_start() #Listening loop start
     return client
+
+class VideoProcessor:
+    def __init__(self, hostname, port, video):
+        self.videoStream = False
+        self.hostname = hostname
+        self.port = port
+        self.video = video
+        self.message = ""
+
+        if hostname != "" and hostname != None:
+            self.videoStream = True
+            self.receiver = VideoStreamSubscriber(hostname, port) # Create subscriber instance            
+        else:
+            # Load video file
+            self.vs = cv2.VideoCapture(args["video"])
+
+    def getFrame(self):
+        if self.videoStream:
+            self.message, frame = self.receiver.receive()
+            ok = True # TODO: Is there a way to get a success message?
+            return ok, cv2.imdecode(np.frombuffer(frame, dtype='uint8'), -1)
+        else:
+            ok, frame = self.vs.read()
+            return ok, frame
+
+    def getTimestamp(self):
+        if self.videoStream:
+            return time()*1000
+        else:
+            return self.vs.get(cv2.CAP_PROP_POS_MSEC)
+
+    def close(self):
+        if self.videoStream:
+            self.receiver.close()
+        else:
+            self.vs.release()
+
+# Helper class implementing an IO deamon thread
+class VideoStreamSubscriber:
+    def __init__(self, hostname, port):
+        self.hostname = hostname
+        self.port = port
+        self._stop = False
+        self._data_ready = threading.Event()
+        self._thread = threading.Thread(target=self._run, args=())
+        self._thread.daemon = True
+        self._thread.start()
+
+    def receive(self, timeout=15.0):
+        flag = self._data_ready.wait(timeout=timeout)
+        if not flag:
+            raise TimeoutError(
+                "Timeout while reading from subscriber tcp://{}:{}".format(self.hostname, self.port))
+        self._data_ready.clear()
+        return self._data
+
+    def _run(self):
+        receiver = imagezmq.ImageHub("tcp://{}:{}".format(self.hostname, self.port), REQ_REP=False)
+        while not self._stop:
+            self._data = receiver.recv_jpg()
+            self._data_ready.set()
+        receiver.close()
+
+    def close(self):
+        self._stop = True
 
 # this class holds the detected objects and tracks them
 class TrafficObject:
@@ -341,10 +409,7 @@ if __name__ == "__main__":
     measuresTopicLevel = config.get("topics","measuresTopicLevel")
     jsonvehicleDataMsg = config.get("messages", "vehicleData").replace("\n","")
 
-    # Open CV
-    # TODO: Need to replace some cmd-line args and move to config file
-
-    # Tracker
+     # Tracker
     trafficDict = {} # Contains the list of objects found
     trackerType = config.get("tracker","trackerType")
     ioUThreshold = config.getfloat("tracker","ioUThreshold")
@@ -375,6 +440,8 @@ if __name__ == "__main__":
     ap.add_argument("-f", "--format", default="", help="Video '<width>' format to be used for display and tracker and output")
     ap.add_argument("-hl", "--headless", action="store_true", help="Headless mode, no video output")
     ap.add_argument("-o", "--output", default="", help="write video to filename </file>")
+    ap.add_argument("-hn", "--hostname", help="hostname of publisher")
+    ap.add_argument("-pt", "--port", default=5555, help="port of publisher")
     args = vars(ap.parse_args())
 
     #Get Filename which will be the key later in the config file
@@ -410,14 +477,13 @@ if __name__ == "__main__":
     # Get required input size of frame
     networkSize = input_details[0]['shape'].max()
 
-    # initialize the video stream and allow the camera sensor to warmup
+    # Prepare for the video
     print("[INFO] starting video stream...")
+    trafficVideo = VideoProcessor(args["hostname"],args["port"],args["video"])
+    ok, orig = trafficVideo.getFrame()
 
-    # Start the video processing
-    vs = cv2.VideoCapture(args["video"])
-    ok, orig = vs.read()
     nativeHeight, nativeWidth, _ = orig.shape
-
+    # Start the video processing
     # Calculate new format if needed
     if args["format"] != "":
         ratio = nativeHeight/nativeWidth
@@ -466,10 +532,10 @@ if __name__ == "__main__":
 
     start = time()
     # loop over the frames from the video stream
-    while vs.isOpened():
+    while ok:
         # grab the frame from the threaded video stream and resize it
         # to have a maximum width of x pixels
-        ok, orig = vs.read()
+        ok, orig = trafficVideo.getFrame()
         if not ok: #End of video reached
             break
         fpstimer = cv2.getTickCount()
@@ -485,7 +551,7 @@ if __name__ == "__main__":
         boxes, classes, scores = invokeInterpreter(interpreter, input_details[0]['index'], output_details, frame)
         
         # Update active trackers
-        timestamp = vs.get(cv2.CAP_PROP_POS_MSEC)
+        timestamp = trafficVideo.getTimestamp()
         for objectID in list(trafficDict):
             ok = trafficDict[objectID].updateTracker(orig, timestamp)
             if not ok:
@@ -510,7 +576,7 @@ if __name__ == "__main__":
                     objectFound = True
 
             if objectFound == False: #No matching tracker, let's add a new tracker
-                timestamp = vs.get(cv2.CAP_PROP_POS_MSEC)
+                timestamp = trafficVideo.getTimestamp()
                 tObject = TrafficObject(TrafficObject.createTracker(trackerType), box, label, staleObject, detectionMissDebit, maxCredit, timestamp)
                 tObject.tracker.init(orig, tBox)
                 trafficDict[tObject.getId] = tObject
@@ -557,6 +623,6 @@ if __name__ == "__main__":
     print(overall_time)
     if writeVideo: out.release()
     cv2.destroyAllWindows()
-    vs.release()
+    trafficVideo.close()
     mqttClient.loop_stop
     print("CV2 tasks and MQTT client stopped.")

@@ -12,11 +12,13 @@
             "console": "integratedTerminal",
             "args": ["-m","./models/mobilenet_ssd_v2_coco_quant_postprocess_edgetpu.tflite",
             //"args": ["-m","./models/mobilenet_ssd_v2_coco_quant_postprocess_cpu.tflite",
-                     "-f","1280",
+                     //"-f","1280",
                      "-l","./models/coco_labels.txt",
                      "-v", "../../../Videos/VID_20200824_082156_1080p_30Hz_Bridge_ZoomX2_Inbound.mp4"
+                     ,"-hn", "localhost"
+                     ,"-pt", "5555"
                      //,"-o", "VID_20200824_082156_1080p_30Hz_Bridge_ZoomX2_Inbound.avi"   
-                     ,"-hl"
+                     //,"-hl"
                ,"-t"
                     ]
         },
@@ -62,6 +64,26 @@
                          "-f","1920",
                          "-v", "../../../Videos/VID_20200824_082156_1080p_30Hz_Bridge_ZoomX2_Inbound.mp4"
                     ]
+        },
+        {
+            "name": "Python: ZMQ Publisher",
+            "type": "python",
+            "request": "launch",
+            "program": "./zmqpublisher.py",
+            "console": "integratedTerminal",
+            "args": [
+                         "-s","odroid.fritz.box",
+                         "-f","900",
+                         "-v", "../../../Videos/VID_20200824_082156_1080p_30Hz_Bridge_ZoomX2_Inbound.mp4"
+                    ]
+        },
+        {
+            "name": "Python: ZMQ Subscriber",
+            "type": "python",
+            "request": "launch",
+            "program": "./playground/zmqsubscriber.py",
+            "console": "integratedTerminal",
+            "args": []
         }
     ]
 }
