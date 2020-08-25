@@ -18,45 +18,6 @@ from sklearn.linear_model import LinearRegression
 import numpy as np
 from os.path import basename 
 
-config = configparser.ConfigParser(inline_comment_prefixes="#")
-config.read(['./config/tracker.ini', "./config/mqtt.ini", "./config/measurements.ini"])
-
-# -------------- Parameters ------------------>>>
-# MQTT
-mqttServerUrl = config.get("server","mqttServerUrl")
-mqttServerPort = config.getint("server","mqttServerPort")
-pemCertFilePath = config.get("server","pemCertFilePath")
-sapIotDeviceID = config.get("devices","sapIotDeviceID")
-sensorAlternateId = config.get("sensors","sensorAlternateId")
-capabilityAlternateId = config.get("sensors","capabilityAlternateId")
-ackTopicLevel = config.get("topics","ackTopicLevel")
-measuresTopicLevel = config.get("topics","measuresTopicLevel")
-jsonvehicleDataMsg = config.get("messages", "vehicleData").replace("\n","")
-
-# Open CV
-# TODO: Need to replace some cmd-line args and move to config file
-
-# Tracker
-trafficDict = {} # Contains the list of objects found
-trackerType = config.get("tracker","trackerType")
-ioUThreshold = config.getfloat("tracker","ioUThreshold")
-staleObject = config.getint("detector","staleObject")
-detectionCredit = config.getint("detector","detectionCredit")
-maxCredit = config.getint("detector","maxCredit")
-detectionMissDebit = config.getint("detector","detectionMissDebit")
-detectionConfidence = config.getfloat("detector","detectionConfidence")
-maxTrackerBoxSize = config.getfloat("tracker","maxTrackerBoxSize")
-classAnomalies = config.get("detector","classAnomalies")
-framesForSpeedCalc = config.getint("tracker","framesForSpeedCalc")
-allowedClasses = eval(config.get("classes","allowedClass"))
-# -------------- Parameters ------------------<<<
-
-EDGETPU_SHARED_LIB = {
-  'Linux': 'libedgetpu.so.1',
-  'Darwin': 'libedgetpu.1.dylib',
-  'Windows': 'edgetpu.dll'
-}[platform.system()]
-
 def make_interpreter(tpu, model_file):
     if tpu:
         model_file, *device = model_file.split('@')
@@ -364,198 +325,238 @@ class TrafficObject:
             self.id, vClass, self.__getSpeed(True), vAngle, vDirection, len(self.labels),
             len(self.track), vClassAvg, vClassStdDev, vColor)
 
-# construct the argument parser and parse the arguments
-ap = argparse.ArgumentParser()
-ap.add_argument("-m", "--model", required=True, help="path to TensorFlow Lite object detection model")
-ap.add_argument("-l", "--labels", required=True, help="path to labels file")
-ap.add_argument("-c", "--confidence", type=float, default=0.65, help="minimum probability to filter weak detections")
-ap.add_argument("-v", "--video", required=True, help="filename of video for detection")
-ap.add_argument("-t", "--tpu", action="store_true", help="TPU is present/ should be used")
-ap.add_argument("-f", "--format", default="", help="Video '<width>' format to be used for display and tracker and output")
-ap.add_argument("-hl", "--headless", action="store_true", help="Headless mode, no video output")
-ap.add_argument("-o", "--output", default="", help="write video to filename </file>")
-args = vars(ap.parse_args())
+if __name__ == "__main__":
+    config = configparser.ConfigParser(inline_comment_prefixes="#")
+    config.read(['./config/tracker.ini', "./config/mqtt.ini", "./config/measurements.ini"])
 
-#Get Filename which will be the key later in the config file
-fileName = basename(args["video"]) 
-# Measurements reference file for speed
-referenceLength = config.getfloat(fileName, "referencelenght")
-trafficupdown = config.getboolean(fileName, "trafficupdown")
-distanceReference = eval(config.get(fileName, "references"))
-regionOfInterest = eval(config.get(fileName, "roi"))
-detectorReference = eval(config.get(fileName, "detectorframe"))
+    # -------------- Parameters ------------------>>>
+    # MQTT
+    mqttServerUrl = config.get("server","mqttServerUrl")
+    mqttServerPort = config.getint("server","mqttServerPort")
+    pemCertFilePath = config.get("server","pemCertFilePath")
+    sapIotDeviceID = config.get("devices","sapIotDeviceID")
+    sensorAlternateId = config.get("sensors","sensorAlternateId")
+    capabilityAlternateId = config.get("sensors","capabilityAlternateId")
+    ackTopicLevel = config.get("topics","ackTopicLevel")
+    measuresTopicLevel = config.get("topics","measuresTopicLevel")
+    jsonvehicleDataMsg = config.get("messages", "vehicleData").replace("\n","")
 
-# start MQTT client
-mqttClient = startMqttClient(sapIotDeviceID)
+    # Open CV
+    # TODO: Need to replace some cmd-line args and move to config file
 
-# initialize the labels dictionary
-print("[INFO] parsing class labels...")
-labels = {}
+    # Tracker
+    trafficDict = {} # Contains the list of objects found
+    trackerType = config.get("tracker","trackerType")
+    ioUThreshold = config.getfloat("tracker","ioUThreshold")
+    staleObject = config.getint("detector","staleObject")
+    detectionCredit = config.getint("detector","detectionCredit")
+    maxCredit = config.getint("detector","maxCredit")
+    detectionMissDebit = config.getint("detector","detectionMissDebit")
+    detectionConfidence = config.getfloat("detector","detectionConfidence")
+    maxTrackerBoxSize = config.getfloat("tracker","maxTrackerBoxSize")
+    classAnomalies = config.get("detector","classAnomalies")
+    framesForSpeedCalc = config.getint("tracker","framesForSpeedCalc")
+    allowedClasses = eval(config.get("classes","allowedClass"))
+    # -------------- Parameters ------------------<<<
 
-# loop over the class labels file
-for row in open(args["labels"]):
-	# unpack the row and update the labels dictionary
-	(classID, label) = row.strip().split(maxsplit=1)
-	labels[int(classID)] = label.strip()
-TrafficObject.labels = labels
-TrafficObject.allowedClasses = allowedClasses
+    EDGETPU_SHARED_LIB = {
+    'Linux': 'libedgetpu.so.1',
+    'Darwin': 'libedgetpu.1.dylib',
+    'Windows': 'edgetpu.dll'
+    }[platform.system()]
 
-# load the tflite detection model
-print("[INFO] loading model into TF Lite...")
-interpreter = make_interpreter(args["tpu"], args["model"])
-input_details, output_details, net_input_shape = getInterpreterDetails(interpreter)
-interpreter.allocate_tensors()
+    # construct the argument parser and parse the arguments
+    ap = argparse.ArgumentParser()
+    ap.add_argument("-m", "--model", required=True, help="path to TensorFlow Lite object detection model")
+    ap.add_argument("-l", "--labels", required=True, help="path to labels file")
+    ap.add_argument("-c", "--confidence", type=float, default=0.65, help="minimum probability to filter weak detections")
+    ap.add_argument("-v", "--video", required=True, help="filename of video for detection")
+    ap.add_argument("-t", "--tpu", action="store_true", help="TPU is present/ should be used")
+    ap.add_argument("-f", "--format", default="", help="Video '<width>' format to be used for display and tracker and output")
+    ap.add_argument("-hl", "--headless", action="store_true", help="Headless mode, no video output")
+    ap.add_argument("-o", "--output", default="", help="write video to filename </file>")
+    args = vars(ap.parse_args())
 
-# Get required input size of frame
-networkSize = input_details[0]['shape'].max()
+    #Get Filename which will be the key later in the config file
+    fileName = basename(args["video"]) 
+    # Measurements reference file for speed
+    referenceLength = config.getfloat(fileName, "referencelenght")
+    trafficupdown = config.getboolean(fileName, "trafficupdown")
+    distanceReference = eval(config.get(fileName, "references"))
+    regionOfInterest = eval(config.get(fileName, "roi"))
+    detectorReference = eval(config.get(fileName, "detectorframe"))
 
-# initialize the video stream and allow the camera sensor to warmup
-print("[INFO] starting video stream...")
+    # start MQTT client
+    mqttClient = startMqttClient(sapIotDeviceID)
 
-# Start the video processing
-vs = cv2.VideoCapture(args["video"])
-orig = vs.read()
-nativeHeight, nativeWidth, _ = orig[1].shape
+    # initialize the labels dictionary
+    print("[INFO] parsing class labels...")
+    labels = {}
 
-# Calculate new format if needed
-if args["format"] != "":
-    ratio = nativeHeight/nativeWidth
-    newHeight = round(ratio*float(args["format"]))
-    newWidth = int(args["format"])
-else:
-    newWidth = nativeWidth
-    newHeight = nativeHeight
-TrafficObject.imgHeight = newHeight # Set the format of the frame
-TrafficObject.imgWidth = newWidth
+    # loop over the class labels file
+    for row in open(args["labels"]):
+        # unpack the row and update the labels dictionary
+        (classID, label) = row.strip().split(maxsplit=1)
+        labels[int(classID)] = label.strip()
+    TrafficObject.labels = labels
+    TrafficObject.allowedClasses = allowedClasses
 
-# Calculate float data from config file to pixel data for chosen format
-pixelReference = []
-for pointXY in distanceReference:
-    pixelReference.append((round(pointXY[0]*newWidth), round(pointXY[1]*newHeight)))
+    # load the tflite detection model
+    print("[INFO] loading model into TF Lite...")
+    interpreter = make_interpreter(args["tpu"], args["model"])
+    input_details, output_details, net_input_shape = getInterpreterDetails(interpreter)
+    interpreter.allocate_tensors()
 
-detectorinPixel = []
-for pointXY in detectorReference:
-    detectorinPixel.append((round(pointXY[0]*newWidth), round(pointXY[1]*newHeight)))
+    # Get required input size of frame
+    networkSize = input_details[0]['shape'].max()
 
-roiInPixel = []
-for pointXY in regionOfInterest:
-    roiInPixel.append((round(pointXY[0]*newWidth), round(pointXY[1]*newHeight)))
+    # initialize the video stream and allow the camera sensor to warmup
+    print("[INFO] starting video stream...")
 
-# Create mask image from configuration file
-maskImage = np.zeros((newHeight,newWidth), dtype=np.uint8)
-cv2.fillPoly(maskImage, [np.array(roiInPixel)], 1)
-
-# Calculate fitting for distance measurement
-referenceDataList = np.asarray(pixelReference, dtype=np.float)
-pixelY = referenceDataList[:,1] # Get height reference pixels (Y-Axis)
-meterScale = np.linspace(0, referenceLength*(len(pixelReference)-1), len(pixelReference)) # Create meter-scale
-polyFitFactors = np.polyfit(pixelY, meterScale, 4) #Polynominal fitting of n-th grade
-TrafficObject.pff = polyFitFactors # Send to class variable
-TrafficObject.minPixel = min(pixelY)
-TrafficObject.maxPixel = max(pixelY)
-TrafficObject.framesForSpeedCalc = framesForSpeedCalc
-TrafficObject.maxXBoundary, TrafficObject.maxYBoundary = detectorinPixel[1] # Tracker ends here
-
-# Optional: write video out
-writeVideo = False
-if args["output"] != "":
-    writeVideo = True
-    fourcc = cv2.VideoWriter_fourcc(*'DIVX') #(*'MP42')
-    out = cv2.VideoWriter(args["output"], fourcc, 20.0, (newWidth,newHeight))
-
-start = time()
-# loop over the frames from the video stream
-while vs.isOpened():
-	# grab the frame from the threaded video stream and resize it
-	# to have a maximum width of x pixels
+    # Start the video processing
+    vs = cv2.VideoCapture(args["video"])
     ok, orig = vs.read()
-    if not ok: #End of video reached
-        break
-    fpstimer = cv2.getTickCount()
-    if args["format"] != "": orig = cv2.resize(orig,(newWidth, newHeight)) #Bi-linear interpolation as default
-    frame = resizeAndPadImage(orig, maskImage, networkSize, detectorinPixel)
-    # cv2.imshow("New detector image", frame)
-    # cv2.waitKey(0)
-    
-	# from BGR to RGB channel ordering 
-    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    nativeHeight, nativeWidth, _ = orig.shape
 
-	# carry out detections on the input frame
-    boxes, classes, scores = invokeInterpreter(interpreter, input_details[0]['index'], output_details, frame)
-    
-    # Update active trackers
-    for objectID in list(trafficDict):
+    # Calculate new format if needed
+    if args["format"] != "":
+        ratio = nativeHeight/nativeWidth
+        newHeight = round(ratio*float(args["format"]))
+        newWidth = int(args["format"])
+    else:
+        newWidth = nativeWidth
+        newHeight = nativeHeight
+    TrafficObject.imgHeight = newHeight # Set the format of the frame
+    TrafficObject.imgWidth = newWidth
+
+    # Calculate float data from config file to pixel data for chosen format
+    pixelReference = []
+    for pointXY in distanceReference:
+        pixelReference.append((round(pointXY[0]*newWidth), round(pointXY[1]*newHeight)))
+
+    detectorinPixel = []
+    for pointXY in detectorReference:
+        detectorinPixel.append((round(pointXY[0]*newWidth), round(pointXY[1]*newHeight)))
+
+    roiInPixel = []
+    for pointXY in regionOfInterest:
+        roiInPixel.append((round(pointXY[0]*newWidth), round(pointXY[1]*newHeight)))
+
+    # Create mask image from configuration file
+    maskImage = np.zeros((newHeight,newWidth), dtype=np.uint8)
+    cv2.fillPoly(maskImage, [np.array(roiInPixel)], 1)
+
+    # Calculate fitting for distance measurement
+    referenceDataList = np.asarray(pixelReference, dtype=np.float)
+    pixelY = referenceDataList[:,1] # Get height reference pixels (Y-Axis)
+    meterScale = np.linspace(0, referenceLength*(len(pixelReference)-1), len(pixelReference)) # Create meter-scale
+    polyFitFactors = np.polyfit(pixelY, meterScale, 4) #Polynominal fitting of n-th grade
+    TrafficObject.pff = polyFitFactors # Send to class variable
+    TrafficObject.minPixel = min(pixelY)
+    TrafficObject.maxPixel = max(pixelY)
+    TrafficObject.framesForSpeedCalc = framesForSpeedCalc
+    TrafficObject.maxXBoundary, TrafficObject.maxYBoundary = detectorinPixel[1] # Tracker ends here
+
+    # Optional: write video out
+    writeVideo = False
+    if args["output"] != "":
+        writeVideo = True
+        fourcc = cv2.VideoWriter_fourcc(*'DIVX') #(*'MP42')
+        out = cv2.VideoWriter(args["output"], fourcc, 20.0, (newWidth,newHeight))
+
+    start = time()
+    # loop over the frames from the video stream
+    while vs.isOpened():
+        # grab the frame from the threaded video stream and resize it
+        # to have a maximum width of x pixels
+        ok, orig = vs.read()
+        if not ok: #End of video reached
+            break
+        fpstimer = cv2.getTickCount()
+        if args["format"] != "": orig = cv2.resize(orig,(newWidth, newHeight)) #Bi-linear interpolation as default
+        frame = resizeAndPadImage(orig, maskImage, networkSize, detectorinPixel)
+        # cv2.imshow("New detector image", frame)
+        # cv2.waitKey(0)
+        
+        # from BGR to RGB channel ordering 
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+        # carry out detections on the input frame
+        boxes, classes, scores = invokeInterpreter(interpreter, input_details[0]['index'], output_details, frame)
+        
+        # Update active trackers
         timestamp = vs.get(cv2.CAP_PROP_POS_MSEC)
-        ok = trafficDict[objectID].updateTracker(orig, timestamp)
-        if not ok:
-            del trafficDict[objectID] #remove the tracker
-
-    # loop over the confidence results
-    for index, conf in enumerate(scores):
-        if not ((conf > detectionConfidence) and (conf <= 1.0) and (TrafficObject.isClassRelevant(int(classes[index])))): break
-        # extract the bounding box and predicted class label
-        box = getBoundingBox(boxes[index].flatten(), newWidth, newHeight, detectorinPixel)      
-        label = TrafficObject.getClassName(classes[index].astype("int"))
-        startX, startY, endX, endY = box
-        if (float(endX-startX)/newWidth) > maxTrackerBoxSize: break # Skips unlikely big detections
-           
-        # Tracking handling starts here
-        tBox = (startX, startY, endX-startX, endY-startY) # Detected box in tracker format
-        objectFound = False
         for objectID in list(trafficDict):
-            if trafficDict[objectID].getIoU(box) > ioUThreshold:  #IoU threshold is met?             
-                trafficDict[objectID].addLabel(label)
-                trafficDict[objectID].addCount(TrafficObject.createTracker(trackerType), orig, tBox, detectionCredit)
-                objectFound = True
+            ok = trafficDict[objectID].updateTracker(orig, timestamp)
+            if not ok:
+                del trafficDict[objectID] #remove the tracker
 
-        if objectFound == False: #No matching tracker, let's add a new tracker
-            timestamp = vs.get(cv2.CAP_PROP_POS_MSEC)
-            tObject = TrafficObject(TrafficObject.createTracker(trackerType), box, label, staleObject, detectionMissDebit, maxCredit, timestamp)
-            tObject.tracker.init(orig, tBox)
-            trafficDict[tObject.getId] = tObject
+        # loop over the confidence results
+        for index, conf in enumerate(scores):
+            if not ((conf > detectionConfidence) and (conf <= 1.0) and (TrafficObject.isClassRelevant(int(classes[index])))): break
+            # extract the bounding box and predicted class label
+            box = getBoundingBox(boxes[index].flatten(), newWidth, newHeight, detectorinPixel)      
+            label = TrafficObject.getClassName(classes[index].astype("int"))
+            startX, startY, endX, endY = box
+            if (float(endX-startX)/newWidth) > maxTrackerBoxSize: break # Skips unlikely big detections
+            
+            # Tracking handling starts here
+            tBox = (startX, startY, endX-startX, endY-startY) # Detected box in tracker format
+            objectFound = False
+            for objectID in list(trafficDict):
+                if trafficDict[objectID].getIoU(box) > ioUThreshold:  #IoU threshold is met?             
+                    trafficDict[objectID].addLabel(label)
+                    trafficDict[objectID].addCount(TrafficObject.createTracker(trackerType), orig, tBox, detectionCredit)
+                    objectFound = True
 
-    for objectID in list(trafficDict):
-        if (trafficDict[objectID].getCredit() == 0) or (trafficDict[objectID].isGone()): #Remove stale or disappeared objects
-            del trafficDict[objectID]
-        else:
-            startXY, endXY = trafficDict[objectID].getBBoxCoord()
-            cv2.rectangle(orig, startXY, endXY, (0, 255, 0), 1)
-            y = startXY[1] - 15 if startXY[1] - 15 > 15 else startXY[1] + 15
-            vClass, _, _ = trafficDict[objectID].getVehicleClass() # Class of car
-            vId = trafficDict[objectID].getId()[-4:] # Vehicle ID (last 4 digits)
-            vSpeed = trafficDict[objectID].getSpeed()
-            vCredit = trafficDict[objectID].getCredit() # Show internal trust into tracked object
-            text = "{0!s} ID{1!s}: v={2:2.1f}km/h {3:d}% credit".format(vClass, vId , vSpeed*3.6, vCredit)
-            cv2.putText(orig, text, (startXY[0], y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-    # Tracker handling ends here
+            if objectFound == False: #No matching tracker, let's add a new tracker
+                timestamp = vs.get(cv2.CAP_PROP_POS_MSEC)
+                tObject = TrafficObject(TrafficObject.createTracker(trackerType), box, label, staleObject, detectionMissDebit, maxCredit, timestamp)
+                tObject.tracker.init(orig, tBox)
+                trafficDict[tObject.getId] = tObject
 
-    # print time required
-    # print(f"Image resize: |{conv_time*1000}|ms. RGB conv.: |{rgb_time*1000}|ms. Inference: |{inf_time*1000}|ms.")
-    
-    # Calculate Frames per second (FPS)
-    fps = cv2.getTickFrequency() / (cv2.getTickCount() - fpstimer)
-    text = "fps: {:.0f}".format(fps)
-    cv2.putText(orig, text, (5, 15), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+        for objectID in list(trafficDict):
+            if (trafficDict[objectID].getCredit() == 0) or (trafficDict[objectID].isGone()): #Remove stale or disappeared objects
+                del trafficDict[objectID]
+            else:
+                startXY, endXY = trafficDict[objectID].getBBoxCoord()
+                cv2.rectangle(orig, startXY, endXY, (0, 255, 0), 1)
+                y = startXY[1] - 15 if startXY[1] - 15 > 15 else startXY[1] + 15
+                vClass, _, _ = trafficDict[objectID].getVehicleClass() # Class of car
+                vId = trafficDict[objectID].getId()[-4:] # Vehicle ID (last 4 digits)
+                vSpeed = trafficDict[objectID].getSpeed()
+                vCredit = trafficDict[objectID].getCredit() # Show internal trust into tracked object
+                text = "{0!s} ID{1!s}: v={2:2.1f}km/h {3:d}% credit".format(vClass, vId , vSpeed*3.6, vCredit)
+                cv2.putText(orig, text, (startXY[0], y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        # Tracker handling ends here
 
-    # show the output frame and wait for a key press
-    if not args["headless"]:
-        cv2.imshow("Frame", orig)
-    # else:
-    #     print(text)
-    key = cv2.waitKey(1) & 0xFF
-    
-    # Optional: write video
-    if writeVideo: out.write(orig)
+        # print time required
+        # print(f"Image resize: |{conv_time*1000}|ms. RGB conv.: |{rgb_time*1000}|ms. Inference: |{inf_time*1000}|ms.")
+        
+        # Calculate Frames per second (FPS)
+        fps = cv2.getTickFrequency() / (cv2.getTickCount() - fpstimer)
+        text = "fps: {:.0f}".format(fps)
+        cv2.putText(orig, text, (5, 15), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
 
-    # if the `q` key was pressed, break from the loop
-    if key == ord("q"):
-        break
+        # show the output frame and wait for a key press
+        if not args["headless"]:
+            cv2.imshow("Frame", orig)
+        # else:
+        #     print(text)
+        key = cv2.waitKey(1) & 0xFF
+        
+        # Optional: write video
+        if writeVideo: out.write(orig)
 
-# do a bit of cleanup
-overall_time = time() - start #Time to convert the frame
-print(overall_time)
-if writeVideo: out.release()
-cv2.destroyAllWindows()
-vs.release()
-mqttClient.loop_stop
-print("CV2 tasks and MQTT client stopped.")
+        # if the `q` key was pressed, break from the loop
+        if key == ord("q"):
+            break
+
+    # do a bit of cleanup
+    overall_time = time() - start #Time to convert the frame
+    print(overall_time)
+    if writeVideo: out.release()
+    cv2.destroyAllWindows()
+    vs.release()
+    mqttClient.loop_stop
+    print("CV2 tasks and MQTT client stopped.")
