@@ -73,8 +73,8 @@
             "console": "integratedTerminal",
             "args": [
                          "-s","odroid.fritz.box",
-                         "-f","900",
-                         "-v", "../../../Videos/VID_20200824_082156_1080p_30Hz_Bridge_ZoomX2_Inbound.mp4"
+                         "-f","1024",
+                         "-v", "../../../Videos/VID_20200824_084509_1080p_30Hz_Bridge_ZoomX2_Inbound.mp4"
                     ]
         },
         {
