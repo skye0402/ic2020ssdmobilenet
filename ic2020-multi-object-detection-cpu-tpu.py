@@ -9,6 +9,7 @@ import cv2
 from PIL import Image
 import argparse
 from time import time
+from time import sleep
 from uuid import uuid4
 import platform
 import ssl
@@ -127,14 +128,24 @@ def startMqttClient(deviceId):
     return client
 
 class VideoProcessor:
-    def __init__(self, hostname, port, video):
+    def __init__(self, hostname, port, video, camera, format):
         self.videoStream = False
         self.hostname = hostname
         self.port = port
         self.video = video
         self.message = ""
 
-        if hostname != "" and hostname != None:
+        if camera:
+            self.videoStream = False
+            #self.vs = cv2.VideoCapture(0)
+            #self.vs.release()
+            self.vs = cv2.VideoCapture(0, cv2.CAP_V4L)
+            self.vs.set(cv2.CAP_PROP_FRAME_WIDTH,1280)#int(format))
+            self.vs.set(cv2.CAP_PROP_FRAME_HEIGHT, 960)
+            #self.vs.set(cv2.CAP_PROP_FPS, 30)
+            
+            sleep(2) #wait 2 seconds for sensor to boot up
+        elif hostname != "" and hostname != None:
             self.videoStream = True
             self.receiver = VideoStreamSubscriber(hostname, port) # Create subscriber instance            
         else:
@@ -442,6 +453,7 @@ if __name__ == "__main__":
     ap.add_argument("-o", "--output", default="", help="write video to filename </file>")
     ap.add_argument("-hn", "--hostname", help="hostname of publisher")
     ap.add_argument("-pt", "--port", default=5555, help="port of publisher")
+    ap.add_argument("-cam", "--camera", action="store_true", help="use USB connected camera")
     args = vars(ap.parse_args())
 
     #Get Filename which will be the key later in the config file
@@ -479,7 +491,7 @@ if __name__ == "__main__":
 
     # Prepare for the video
     print("[INFO] starting video stream...")
-    trafficVideo = VideoProcessor(args["hostname"],args["port"],args["video"])
+    trafficVideo = VideoProcessor(args["hostname"],args["port"],args["video"], args["camera"], args["format"])
     ok, orig = trafficVideo.getFrame()
 
     nativeHeight, nativeWidth, _ = orig.shape
@@ -553,8 +565,8 @@ if __name__ == "__main__":
         # Update active trackers
         timestamp = trafficVideo.getTimestamp()
         for objectID in list(trafficDict):
-            ok = trafficDict[objectID].updateTracker(orig, timestamp)
-            if not ok:
+            objectOk = trafficDict[objectID].updateTracker(orig, timestamp)
+            if not objectOk:
                 del trafficDict[objectID] #remove the tracker
 
         # loop over the confidence results
@@ -616,6 +628,7 @@ if __name__ == "__main__":
 
         # if the `q` key was pressed, break from the loop
         if key == ord("q"):
+            print("Quit command received.")
             break
 
     # do a bit of cleanup
