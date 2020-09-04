@@ -1,6 +1,5 @@
 certificates/
-.vscode/
+**/.vscode/
 playground/
 __pycache__/
-mqtt-client-test.py
-multiprocessing
+config/
