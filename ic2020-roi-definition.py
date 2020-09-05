@@ -3,6 +3,7 @@ import numpy as np
 import PySimpleGUI as sg
 import argparse
 import configparser
+from time import sleep
 from os.path import basename 
 
 mouse_pressed = False
@@ -42,8 +43,11 @@ config.read(configFile) #Read existing configuration
 
 # Load video
 if args["camera"]:
-    vs = cv2.VideoCapture(0)
-    vs.set(cv2.CAP_PROP_FRAME_WIDTH,int(args["format"]))
+    vs = cv2.VideoCapture(0, cv2.CAP_V4L)
+    vs.set(cv2.CAP_PROP_FRAME_WIDTH,1280)
+    vs.set(cv2.CAP_PROP_FRAME_HEIGHT, 960)
+    vs.set(cv2.CAP_PROP_AUTO_EXPOSURE, -1)
+    sleep(4)
 else:
     vs = cv2.VideoCapture(args["video"])
 
@@ -69,7 +73,7 @@ while True:
     cv2.imshow(windowName, image_to_show)
     k = cv2.waitKey(1)
 
-    if k == ord("s"): 
+    if (k == ord("s") and len(regionOfInterest)==4): 
         # Save measurements
         floatRoi = []
         for pointXY in regionOfInterest:
@@ -102,10 +106,11 @@ while True:
         cv2.imshow(windowRoi, newImage)
     elif k == ord("r"):
         # Reset the points
-        cv2.destroyWindow(windowRoi)
+        cv2.destroyWindow(windowName)
         roiPolygon = []
         image_to_show = np.copy(frame)
         cv2.imshow(windowName, image_to_show)
+        cv2.setMouseCallback(windowName, mouse_callback, frame)
         print("Reset the points, please start over.")
     elif (k == 27) or (k == ord("q")):
         break

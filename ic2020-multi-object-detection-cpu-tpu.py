@@ -1,6 +1,6 @@
 # Multi-object tracking for traffic Team 304 // Innovator Challenge 2020
 
-# import the necessary packages
+# import the necessary modules
 from edgetpu.detection.engine import DetectionEngine
 import tflite_runtime.interpreter as tflite
 import imutils
@@ -614,7 +614,7 @@ if __name__ == "__main__":
         # Calculate Frames per second (FPS)
         fps = cv2.getTickFrequency() / (cv2.getTickCount() - fpstimer)
         text = "fps: {:.0f}".format(fps)
-        cv2.putText(orig, text, (5, 15), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+        cv2.putText(orig, text, (5, 15), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
 
         # show the output frame and wait for a key press
         if not args["headless"]:
