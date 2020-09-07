@@ -10,17 +10,14 @@ from PIL import Image
 import argparse
 from time import time
 from time import sleep
-from uuid import uuid4
 import platform
-import ssl
-import paho.mqtt.client as mqtt
 import configparser
 from sklearn.linear_model import LinearRegression
 import numpy as np
 from os.path import basename 
-import threading
-import socket
-import imagezmq
+import VideoProcessing
+from Traffictracking import TrafficObject
+import MqttClient
 
 def make_interpreter(tpu, model_file):
     if tpu:
@@ -97,312 +94,7 @@ def resizeAndPadImage(image, maskImg, networkSize, detectorImageRectangle):
     color = [0, 0, 0]
     return cv2.copyMakeBorder(image, top, bottom, left, right, cv2.BORDER_CONSTANT, value=color)
 
-# The callback for when the client receives a CONNACK response from the server.
-def onConnect(client, userdata, flags, rc):
-    rcList = {
-        0: "Connection successful",
-        1: "Connection refused - incorrect protocol version",
-        2: "Connection refused - invalid client identifier",
-        3: "Connection refused - server unavailable",
-        4: "Connection refused - bad username or password",
-        5: "Connection refused",
-    }
-    print(rcList.get(rc, "Unknown server connection return code {}.".format(rc)))
 
-# The callback for when a PUBLISH message is received from the server.
-def onMessage(client, userdata, msg):
-    print(msg.topic+" "+str(msg.payload))
-
-# Send message to SAP MQTT Server
-def sendMessage(client, deviceID, messageContentJson):
-    client.publish(deviceID, messageContentJson)    
-
-def startMqttClient(deviceId):
-    client = mqtt.Client(deviceId) 
-    client.on_connect = onConnect
-    client.on_message = onMessage
-    client.tls_set(certfile=pemCertFilePath, cert_reqs=ssl.CERT_REQUIRED, tls_version=ssl.PROTOCOL_TLS, ciphers=None)
-    client.connect(mqttServerUrl, mqttServerPort)
-    client.subscribe(ackTopicLevel+sapIotDeviceID) #Subscribe to device ack topic (feedback given from SAP IoT MQTT Server)
-    client.loop_start() #Listening loop start
-    return client
-
-class VideoProcessor:
-    def __init__(self, hostname, port, video, camera, format):
-        self.videoStream = False
-        self.hostname = hostname
-        self.port = port
-        self.video = video
-        self.message = ""
-
-        if camera:
-            self.videoStream = False
-            #self.vs = cv2.VideoCapture(0)
-            #self.vs.release()
-            self.vs = cv2.VideoCapture(0, cv2.CAP_V4L)
-            self.vs.set(cv2.CAP_PROP_FRAME_WIDTH,1280)#int(format))
-            self.vs.set(cv2.CAP_PROP_FRAME_HEIGHT, 960)
-            #self.vs.set(cv2.CAP_PROP_FPS, 30)
-            
-            sleep(2) #wait 2 seconds for sensor to boot up
-        elif hostname != "" and hostname != None:
-            self.videoStream = True
-            self.receiver = VideoStreamSubscriber(hostname, port) # Create subscriber instance            
-        else:
-            # Load video file
-            self.vs = cv2.VideoCapture(args["video"])
-
-    def getFrame(self):
-        if self.videoStream:
-            self.message, frame = self.receiver.receive()
-            ok = True # TODO: Is there a way to get a success message?
-            return ok, cv2.imdecode(np.frombuffer(frame, dtype='uint8'), -1)
-        else:
-            ok, frame = self.vs.read()
-            return ok, frame
-
-    def getTimestamp(self):
-        if self.videoStream:
-            return time()*1000
-        else:
-            return self.vs.get(cv2.CAP_PROP_POS_MSEC)
-
-    def close(self):
-        if self.videoStream:
-            self.receiver.close()
-        else:
-            self.vs.release()
-
-# Helper class implementing an IO deamon thread
-class VideoStreamSubscriber:
-    def __init__(self, hostname, port):
-        self.hostname = hostname
-        self.port = port
-        self._stop = False
-        self._data_ready = threading.Event()
-        self._thread = threading.Thread(target=self._run, args=())
-        self._thread.daemon = True
-        self._thread.start()
-
-    def receive(self, timeout=15.0):
-        flag = self._data_ready.wait(timeout=timeout)
-        if not flag:
-            raise TimeoutError(
-                "Timeout while reading from subscriber tcp://{}:{}".format(self.hostname, self.port))
-        self._data_ready.clear()
-        return self._data
-
-    def _run(self):
-        receiver = imagezmq.ImageHub("tcp://{}:{}".format(self.hostname, self.port), REQ_REP=False)
-        while not self._stop:
-            self._data = receiver.recv_jpg()
-            self._data_ready.set()
-        receiver.close()
-
-    def close(self):
-        self._stop = True
-
-# this class holds the detected objects and tracks them
-class TrafficObject:
-    # Class variables
-    imgHeight = 0
-    imgWidth = 0
-    pff = [] # Fitting factors (delivered by main program)
-    minPixel = 0 # Earliest/ latest measurement points
-    maxPixel = 0 
-    framesForSpeedCalc = 0 # last n frames to consider for speed calculation
-    maxXBoundary = 0 #Coordinate where tracker should stop
-    maxYBoundary = 0 #set by main program
-    labels = [] # Labels for the classes
-    allowedClasses = [] # Classes to be considered
-
-    # Constructor method
-    def __init__(self, tTracker, bBox, classLabel, creditLimit, detectionMissDebit, maxCredit, timestamp):
-        self.id = str(uuid4()) # assign a unique ID
-        self.tracker = tTracker
-        self.box = bBox
-        self.detectionCredit = creditLimit # start with the limit
-        self.creditLimit = creditLimit
-        self.labels = [classLabel]
-        self.detectionMissDebit = detectionMissDebit
-        self.maxCredit = maxCredit
-        self.track = []
-        self.track.append((timestamp, TrafficObject.__calcCenter(bBox))) # start track
-        self.speed = 0.
-
-    # Destructor method
-    def __del__(self):
-        jsonMsg = self.__createMsg()
-        sendMessage(mqttClient, measuresTopicLevel+sapIotDeviceID, jsonMsg) # send the object data to SAP IoT
-        print("Object {} says good bye.".format(self.id))
-    
-    # Calculates the intersection over union (class method)
-    def __calcIoU(self, boxA, boxB):
-        # determine the (x, y)-coordinates of the intersection rectangle
-        xA = max(boxA[0], boxB[0])
-        yA = max(boxA[1], boxB[1])
-        xB = min(boxA[2], boxB[2])
-        yB = min(boxA[3], boxB[3])
-        # compute the area of intersection rectangle
-        interArea = max(0, xB - xA + 1) * max(0, yB - yA + 1)
-        # compute the area of both the prediction and ground-truth
-        # rectangles
-        boxAArea = (boxA[2] - boxA[0] + 1) * (boxA[3] - boxA[1] + 1)
-        boxBArea = (boxB[2] - boxB[0] + 1) * (boxB[3] - boxB[1] + 1)
-        # compute the intersection over union by taking the intersection
-        # area and dividing it by the sum of prediction + ground-truth
-        # areas - the interesection area
-        iou = interArea / float(boxAArea + boxBArea - interArea)
-        # return the intersection over union value
-        return iou
-
-    # Create tracker object (class method)
-    def createTracker(trackerType):
-        if trackerType == 'BOOSTING':
-            newTracker = cv2.TrackerBoosting_create()
-        if trackerType == 'MIL':
-            newTracker = cv2.TrackerMIL_create()
-        if trackerType == 'KCF':
-            newTracker = cv2.TrackerKCF_create()
-        if trackerType == 'TLD':
-            newTracker = cv2.TrackerTLD_create()
-        if trackerType == 'MEDIANFLOW':
-            newTracker = cv2.TrackerMedianFlow_create()
-        if trackerType == 'GOTURN':
-            newTracker = cv2.TrackerGOTURN_create()
-        if trackerType == 'MOSSE':
-            newTracker = cv2.TrackerMOSSE_create()
-        if trackerType == "CSRT":
-            newTracker = cv2.TrackerCSRT_create()
-        return newTracker
-
-    # Get class
-    def getClassName(classID):
-        return labels[classID]
-
-    # Is class in scope?
-    def isClassRelevant(classID):
-        return TrafficObject.getClassName(classID) in TrafficObject.allowedClasses
-        
-    # Get IoU of tracker box vs detection
-    def getIoU(self, boxInput):        
-        return self.__calcIoU(boxInput, self.__getBBox())
-
-    # Get object ID
-    def getId(self):
-        return self.id
-
-    # Add detection counter
-    def addCount(self, tracker, image, bBox, credit):
-        if self.detectionCredit <= (self.creditLimit + self.maxCredit):
-            self.detectionCredit += credit
-        self.tracker = tracker
-        self.tracker.init(image, bBox) #Note! We initialize the tracker to adjust the bounding box size
-
-    # Add label
-    def addLabel(self, classLabel):
-        self.labels.append(classLabel)
-
-    # Get bounding box of tracker
-    def __getBBox(self):
-        return self.box
-
-    # Get credit factor of tracker (must be greater than zero)
-    def getCredit(self):
-        creditFactor = int(100 * self.detectionCredit / self.creditLimit)
-        if creditFactor < 0:
-            creditFactor = 0
-        return creditFactor
-
-    # Check if tracker is still within image
-    def isGone(self):
-        objectIsGone = False
-        (cX, cY) = TrafficObject.__calcCenter(self.box)
-        if (cX >= TrafficObject.maxXBoundary) or (cY >= TrafficObject.maxYBoundary) or (cX <= 0) or (cY <= 0):
-            objectIsGone = True
-        return objectIsGone
-
-    # Add center of frame (of tracker) to list
-    def __calcCenter(box):
-        cX = box[0]+((box[2]-box[0])/2)
-        cY = box[1]+((box[3]-box[1])/2)
-        return (cX, cY)  
-
-    # Get bounding box absolute coordinates
-    def getBBoxCoord(self):
-        return (self.box[0], self.box[1]), (self.box[2], self.box[3])
-
-    # Update tracker with new frame
-    def updateTracker(self, image, timestamp):
-        ok, bbox = self.tracker.update(image)
-        self.detectionCredit -= self.detectionMissDebit # We remove the credit from the last detection
-        if ok:
-            self.box = (int(bbox[0]), int(bbox[1]), int(bbox[0]+bbox[2]), int(bbox[1]+bbox[3]))
-            
-            self.track.append((timestamp, TrafficObject.__calcCenter(self.box))) # extend track
-            self.speed = self.__getSpeed(True) # Try to get speed over last 4 measurements
-            return True
-        else:
-            return False #tracker lost track 
-
-    # Calculate speed
-    def __getSpeed(self, useAllData=False, nFrames = 2):
-        speed = 0
-        n = len(self.track)
-        if n>=nFrames: # Check we have sufficient measurements
-            if useAllData: # We measure from first trackpoint to current trackpoint (higher precision?)
-                for yP in self.track:
-                    y0 = yP[1][1] 
-                    t0 = yP[0]
-                    if y0 >= TrafficObject.minPixel and y0 <= TrafficObject.maxPixel: break
-                for yP in reversed(self.track):
-                    y1 = yP[1][1] 
-                    t1 = yP[0]
-                    if y1 >= TrafficObject.minPixel and y1 <= TrafficObject.maxPixel: break
-            else:
-                y0 = self.track[n-nFrames][1][1]        
-                t0 = self.track[n-nFrames][0]
-                y1 = self.track[n-1][1][1]
-                t1 = self.track[n-1][0]
-            # Inside reference boundaries:
-            if y0>=TrafficObject.minPixel and y0<=TrafficObject.maxPixel and y1>=TrafficObject.minPixel and y1<=TrafficObject.maxPixel: 
-                distance = abs(np.polyval(TrafficObject.pff, y0) - np.polyval(TrafficObject.pff, y1)) # interpolated distance in meters
-                timeTravelled = (t1 - t0) / 1000 # time in seconds
-                speed = (distance / timeTravelled) # speed in m/s
-                return speed
-            else:
-                return self.speed # use last possible calculation
-        else:
-            return self.speed
-
-    # Public method to get speed
-    def getSpeed(self):
-        return self.speed
-
-    # Get Vehicle direction data
-    def  __getVehicleDirection(self):
-        return "Inbound", 179.5 # Verbal and angle, video frame up is north 0°
-
-    # Get vehicle class data
-    def getVehicleClass(self):
-        histogram = Counter(self.labels)
-        percentHistogram = [(i, histogram[i] / len(self.labels)) for i in histogram]
-        vClass, vClConf = percentHistogram[0]
-        return vClass, vClConf, 0.0
-
-    # Get vehicle color
-    def __getVehicleColor(self):
-        return "undefined"
-
-    # Create MQTT message
-    def __createMsg(self):
-        vDirection,vAngle = self.__getVehicleDirection()
-        vClass, vClassAvg, vClassStdDev = self.getVehicleClass()
-        vColor = self.__getVehicleColor()
-
-        return jsonvehicleDataMsg.format(capabilityAlternateId, sensorAlternateId,
-            self.id, vClass, self.__getSpeed(True), vAngle, vDirection, len(self.labels),
-            len(self.track), vClassAvg, vClassStdDev, vColor)
 
 if __name__ == "__main__":
     config = configparser.ConfigParser(inline_comment_prefixes="#")
@@ -466,7 +158,10 @@ if __name__ == "__main__":
     detectorReference = eval(config.get(fileName, "detectorframe"))
 
     # start MQTT client
-    mqttClient = startMqttClient(sapIotDeviceID)
+    mqttClient = MqttClient.startMqttClient(sapIotDeviceID, pemCertFilePath, mqttServerUrl, mqttServerPort, ackTopicLevel, sapIotDeviceID)
+    TrafficObject.sapIotDeviceID = sapIotDeviceID
+    TrafficObject.mqttClient = mqttClient
+    TrafficObject.measuresTopicLevel = measuresTopicLevel
 
     # initialize the labels dictionary
     print("[INFO] parsing class labels...")
@@ -479,6 +174,9 @@ if __name__ == "__main__":
         labels[int(classID)] = label.strip()
     TrafficObject.labels = labels
     TrafficObject.allowedClasses = allowedClasses
+    TrafficObject.jsonvehicleDataMsg = jsonvehicleDataMsg
+    TrafficObject.capabilityAlternateId = capabilityAlternateId
+    TrafficObject.sensorAlternateId = sensorAlternateId
 
     # load the tflite detection model
     print("[INFO] loading model into TF Lite...")
@@ -491,7 +189,7 @@ if __name__ == "__main__":
 
     # Prepare for the video
     print("[INFO] starting video stream...")
-    trafficVideo = VideoProcessor(args["hostname"],args["port"],args["video"], args["camera"], args["format"])
+    trafficVideo = VideoProcessing.VideoProcessor(args["hostname"],args["port"],args["video"], args["camera"], args["format"])
     ok, orig = trafficVideo.getFrame()
 
     nativeHeight, nativeWidth, _ = orig.shape
@@ -613,8 +311,9 @@ if __name__ == "__main__":
         
         # Calculate Frames per second (FPS)
         fps = cv2.getTickFrequency() / (cv2.getTickCount() - fpstimer)
-        text = "fps: {:.0f}".format(fps)
-        cv2.putText(orig, text, (5, 15), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
+        autoex, exposure, gain, gamma = trafficVideo.getCameraParams()
+        text = "fps: {:.0f} auto-exposure: {:s} exposure: {:d} gain: {:d} gamma: {:d}".format(fps, autoex, exposure, gain, gamma)
+        cv2.putText(orig, text, (5, 15), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1) 
 
         # show the output frame and wait for a key press
         if not args["headless"]:
@@ -625,6 +324,10 @@ if __name__ == "__main__":
         
         # Optional: write video
         if writeVideo: out.write(orig)
+
+        # Allow for manual camera settings
+        if chr(key) in "aAiIgGxXpP":
+            trafficVideo.setCameraParams(key)
 
         # if the `q` key was pressed, break from the loop
         if key == ord("q"):
