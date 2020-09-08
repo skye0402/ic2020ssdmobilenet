@@ -48,11 +48,13 @@ def invokeInterpreter(interpreter, inputdetails, outputdetails, image):
     #num = interpreter.get_tensor(output_details[3]['index'])[0]  # Total number of detected objects (inaccurate and not needed)
     return boxes, classes, scores
 
-def getBoundingBox(boxData, newWidth, newHeight, detectorImageRectangle):
+def getBoundingBox(boxData, newWidth, newHeight, detectorImageRectangle, detectorNo):
+    sI = detectorNo*2-2
+    eI = detectorNo*2-1
     (startY, startX, endY, endX) = boxData
     # Calculate the detection boxes based on the detector image
-    x0,y0 = detectorImageRectangle[0]
-    x1,y1 = detectorImageRectangle[1]
+    x0,y0 = detectorImageRectangle[sI]
+    x1,y1 = detectorImageRectangle[eI]
 
     detectorWidth = x1-x0
     detectorHeight = y1-y0
@@ -94,7 +96,13 @@ def resizeAndPadImage(image, maskImg, networkSize, detectorImageRectangle):
     color = [0, 0, 0]
     return cv2.copyMakeBorder(image, top, bottom, left, right, cv2.BORDER_CONSTANT, value=color)
 
-
+def calculateCentroid(vertexes):
+    x_list = [vertex [0] for vertext in vertexes]
+    y_list = [vertex [1] for vertext in vertexes]
+    llen = len(vertexes)
+    x = sum(x_list)/llen
+    y = sum(y_list)/llen
+    return (x,y)
 
 if __name__ == "__main__":
     config = configparser.ConfigParser(inline_comment_prefixes="#")
@@ -156,6 +164,14 @@ if __name__ == "__main__":
     distanceReference = eval(config.get(fileName, "references"))
     regionOfInterest = eval(config.get(fileName, "roi"))
     detectorReference = eval(config.get(fileName, "detectorframe"))
+    detectorAmount = int(len(detectorReference)/2) #Amount of detectors to be used
+
+    # # Calculate boundary for tracking
+    # for i in range(1, detectorAmount+1):
+    #     roiCenter = calculateCentroid(regionOfInterest[i*4-4:i*4-1])
+    #     detectorCenterX = (detectorReference[i*2-1]-detectorReference[i*2-2])/2
+    #     detectorCenterY = (detectorReference[i*2]-detectorReference[i*2-1])/2
+
 
     # start MQTT client
     mqttClient = MqttClient.startMqttClient(sapIotDeviceID, pemCertFilePath, mqttServerUrl, mqttServerPort, ackTopicLevel, sapIotDeviceID)
@@ -231,7 +247,8 @@ if __name__ == "__main__":
     TrafficObject.minPixel = min(pixelY)
     TrafficObject.maxPixel = max(pixelY)
     TrafficObject.framesForSpeedCalc = framesForSpeedCalc
-    TrafficObject.maxXBoundary, TrafficObject.maxYBoundary = detectorinPixel[1] # Tracker ends here
+    TrafficObject.roiArea = roiInPixel
+    #TrafficObject.maxXBoundary, TrafficObject.maxYBoundary = detectorinPixel[1] # Tracker ends here
 
     # Optional: write video out
     writeVideo = False
@@ -250,15 +267,21 @@ if __name__ == "__main__":
             break
         fpstimer = cv2.getTickCount()
         if args["format"] != "": orig = cv2.resize(orig,(newWidth, newHeight)) #Bi-linear interpolation as default
-        frame = resizeAndPadImage(orig, maskImage, networkSize, detectorinPixel)
-        # cv2.imshow("New detector image", frame)
-        # cv2.waitKey(0)
-        
-        # from BGR to RGB channel ordering 
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        # Loop for detectors
+        detectorResults = []
+        for i in range(1, detectorAmount+1):
+            startIndex = i*2 - 2
+            endIndex = i*2
+            frame = resizeAndPadImage(orig, maskImage, networkSize, detectorinPixel[startIndex:endIndex])
+            # cv2.imshow("New detector image", frame)
+            # cv2.waitKey(0)
+            
+            # from BGR to RGB channel ordering 
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-        # carry out detections on the input frame
-        boxes, classes, scores = invokeInterpreter(interpreter, input_details[0]['index'], output_details, frame)
+            # carry out detections on the input frame
+            boxes, classes, scores = invokeInterpreter(interpreter, input_details[0]['index'], output_details, frame)
+            detectorResults.append((boxes,classes,scores))
         
         # Update active trackers
         timestamp = trafficVideo.getTimestamp()
@@ -268,28 +291,30 @@ if __name__ == "__main__":
                 del trafficDict[objectID] #remove the tracker
 
         # loop over the confidence results
-        for index, conf in enumerate(scores):
-            if not ((conf > detectionConfidence) and (conf <= 1.0) and (TrafficObject.isClassRelevant(int(classes[index])))): break
-            # extract the bounding box and predicted class label
-            box = getBoundingBox(boxes[index].flatten(), newWidth, newHeight, detectorinPixel)      
-            label = TrafficObject.getClassName(classes[index].astype("int"))
-            startX, startY, endX, endY = box
-            if (float(endX-startX)/newWidth) > maxTrackerBoxSize: break # Skips unlikely big detections
-            
-            # Tracking handling starts here
-            tBox = (startX, startY, endX-startX, endY-startY) # Detected box in tracker format
-            objectFound = False
-            for objectID in list(trafficDict):
-                if trafficDict[objectID].getIoU(box) > ioUThreshold:  #IoU threshold is met?             
-                    trafficDict[objectID].addLabel(label)
-                    trafficDict[objectID].addCount(TrafficObject.createTracker(trackerType), orig, tBox, detectionCredit)
-                    objectFound = True
+        for i in range(1, detectorAmount+1):
+            boxes, classes, scores = detectorResults[i-1]
+            for index, conf in enumerate(scores):
+                if not ((conf > detectionConfidence) and (conf <= 1.0) and (TrafficObject.isClassRelevant(int(classes[index])))): break
+                # extract the bounding box and predicted class label
+                box = getBoundingBox(boxes[index].flatten(), newWidth, newHeight, detectorinPixel, i)      
+                label = TrafficObject.getClassName(classes[index].astype("int"))
+                startX, startY, endX, endY = box
+                if (float(endX-startX)/newWidth) > maxTrackerBoxSize: break # Skips unlikely big detections
+                
+                # Tracking handling starts here
+                tBox = (startX, startY, endX-startX, endY-startY) # Detected box in tracker format
+                objectFound = False
+                for objectID in list(trafficDict):
+                    if trafficDict[objectID].getIoU(box) > ioUThreshold:  #IoU threshold is met?             
+                        trafficDict[objectID].addLabel(label)
+                        trafficDict[objectID].addCount(TrafficObject.createTracker(trackerType), orig, tBox, detectionCredit)
+                        objectFound = True
 
-            if objectFound == False: #No matching tracker, let's add a new tracker
-                timestamp = trafficVideo.getTimestamp()
-                tObject = TrafficObject(TrafficObject.createTracker(trackerType), box, label, staleObject, detectionMissDebit, maxCredit, timestamp)
-                tObject.tracker.init(orig, tBox)
-                trafficDict[tObject.getId] = tObject
+                if objectFound == False: #No matching tracker, let's add a new tracker
+                    timestamp = trafficVideo.getTimestamp()
+                    tObject = TrafficObject(TrafficObject.createTracker(trackerType), box, label, staleObject, detectionMissDebit, maxCredit, timestamp, i)
+                    tObject.tracker.init(orig, tBox)
+                    trafficDict[tObject.getId] = tObject
 
         for objectID in list(trafficDict):
             if (trafficDict[objectID].getCredit() == 0) or (trafficDict[objectID].isGone()): #Remove stale or disappeared objects

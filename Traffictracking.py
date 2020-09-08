@@ -13,8 +13,6 @@ class TrafficObject:
     minPixel = 0 # Earliest/ latest measurement points
     maxPixel = 0 
     framesForSpeedCalc = 0 # last n frames to consider for speed calculation
-    maxXBoundary = 0 #Coordinate where tracker should stop
-    maxYBoundary = 0 #set by main program
     labels = [] # Labels for the classes
     allowedClasses = [] # Classes to be considered
     jsonvehicleDataMsg = "" # The template for the MQTT message (filled by config file)
@@ -23,10 +21,11 @@ class TrafficObject:
     mqttClient = "" # Will be set at first call by main
     measuresTopicLevel = ""
     sapIotDeviceID = ""
+    roiArea = [] #ROI area defined from config file
 
 
     # Constructor method
-    def __init__(self, tTracker, bBox, classLabel, creditLimit, detectionMissDebit, maxCredit, timestamp):
+    def __init__(self, tTracker, bBox, classLabel, creditLimit, detectionMissDebit, maxCredit, timestamp, detectorNo):
         self.id = str(uuid4()) # assign a unique ID
         self.tracker = tTracker
         self.box = bBox
@@ -38,6 +37,7 @@ class TrafficObject:
         self.track = []
         self.track.append((timestamp, TrafficObject.__calcCenter(bBox))) # start track
         self.speed = 0.
+        self.detectorNo = detectorNo
 
     # Destructor method
     def __del__(self):
@@ -127,7 +127,13 @@ class TrafficObject:
     def isGone(self):
         objectIsGone = False
         (cX, cY) = TrafficObject.__calcCenter(self.box)
-        if (cX >= TrafficObject.maxXBoundary) or (cY >= TrafficObject.maxYBoundary) or (cX <= 0) or (cY <= 0):
+        relevantRoiArea = TrafficObject.roiArea[4*self.detectorNo-4:4*self.detectorNo-1]
+        minX = min(relevantRoiArea, key=lambda item:item[0])[0]
+        minY = min(relevantRoiArea, key=lambda item:item[1])[1]
+        maxX = max(relevantRoiArea, key=lambda item:item[0])[0]
+        maxY = max(relevantRoiArea, key=lambda item:item[1])[1]
+
+        if (cX >= maxX) or (cY >= maxY) or (cX <= minX) or (cY <= minY):
             objectIsGone = True
         return objectIsGone
 

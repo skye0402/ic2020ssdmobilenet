@@ -9,6 +9,7 @@ from os.path import basename
 mouse_pressed = False
 windowName ="Define region of interest (ROI)"
 windowRoi ="Selected ROI"
+maskedImage = []
 
 # Variables for the config file
 referenceLength = 0.0
@@ -17,14 +18,18 @@ roiPolygon = []
 regionOfInterest = []
 roiAmount = 1
 detectorBox = []
+detectorCount = 0
 dSquare = []
 upDown = True # Left/Right = False
 imageSize = 0 # Width (leftRight) or Height (upDown)
 configFile = "./config/measurements.ini"
+lastX = 0
+lastY = 0
 
 def mouse_callback(event, x, y, flags, param):
-    global image_to_show, s_x, s_y, e_x, e_y, mouse_pressed
-    if mode = "D":
+ 
+    global image_to_show, s_x, s_y, e_x, e_y, mouse_pressed, detectorCount, dSquare, maskedImage, lastX, lastY
+    if mode == "D":
         if event == cv2.EVENT_LBUTTONDOWN:
             mouse_pressed = True        
             if len(roiPolygon)>=4: # switch color for 2nd ROI polygon markers
@@ -34,18 +39,28 @@ def mouse_callback(event, x, y, flags, param):
             if len(roiPolygon)<4*roiAmount:
                 print(x,y)
                 cv2.circle(image_to_show, (x,y), 3, colorCode)
-                roiPolygon.append((x,y))
-            # elif len(roiPolygon)>=4*roiAmount and len(detectorBox)<roiAmount: # from here we set the detector box upper, left corner
-            #     colorCode = (255,255,255)
-            #     print("Detector box {:d} upper left corner ".format(len(detectorBox)),x,y)
-            #     cv2.circle(image_to_show, (x,y), 3, color=colorCode, thickness=-1)
-            #     detectorBox.append((x,y))
-        
+                roiPolygon.append((x,y))        
             else:
                 print("Press V to preview, press R to reset.")
-    elif mode = "S":
+
+    elif mode == "S":
+        if detectorCount == 0:
+            colorCode = (0,255,0) 
+        else: 
+            colorCode = (255,0,0)
+
         if event == cv2.EVENT_LBUTTONDOWN:
-            cv2.rectangle(image_to_show,(),(), 1, colorCode)
+            image_to_show = np.copy(maskedImage)
+            if detectorCount>0:
+                cv2.rectangle(image_to_show,detectorBox[0],detectorBox[1], color=(0,255,0))
+
+            cv2.rectangle(image_to_show,(x,y),(x+dSquare[detectorCount],y+dSquare[detectorCount]), color=colorCode)
+            lastX = x
+            lastY = y
+        if event == cv2.EVENT_RBUTTONDOWN:
+            detectorBox.append((lastX, lastY))
+            detectorBox.append((lastX+dSquare[detectorCount], lastY+dSquare[detectorCount]))
+            detectorCount += 1
         
 # Main program
 # construct the argument parser and parse the arguments
@@ -82,30 +97,6 @@ while True:
             break
     else:
         window['-ROICOUNT-']('')
-
-# # construct the gui
-# layout = [  [sg.Text("Please define the ")],
-#             [sg.Text("e.g. 2.0 = tracking window is 2x detection ROI etc."), sg.InputText(key="-TRACKROI-")],
-#             [sg.Button("Ok"), sg.Button("Cancel")] ]
-
-# # Create the Window
-
-# window = sg.Window("ROI tool for roads to define tracking area relative to detection ROI", layout, finalize=True)
-# while True:
-#     event, values = window.read()
-#     if event == sg.WIN_CLOSED or event == "Cancel":	# if user closes window or clicks cancel
-#         print("Leaving program.")
-#         quit()
-#     if values["-TRACKROI-"].isnumeric():
-#         if float(values["-TRACKROI-"]) >= 1.0:
-
-#             print("You entered that tracking window will be ", values["-TRACKROI-"]," times the detection ROI.")
-#             trackingRoi = float(values["-TRACKROI-"])
-#             window.close()
-#             break
-#     else:
-#         window['-TRACKROI-']('')
-
 
 # Load video
 if args["camera"]:
@@ -150,13 +141,18 @@ while True:
             config.add_section(fileName)
             config.set(fileName, "roi", str(floatRoi))
 
+        detectorBoxFloat = []
+        for xyC in detectorBox:
+            relX = xyC[0] / newWidth
+            relY = xyC[1] / newHeight
+            detectorBoxFloat.append((relX,relY))
         # # Get the frame for the detector to maximize the network resolution
         # minX = float(min(regionOfInterest, key=lambda item:item[0])[0] / newWidth)
         # minY = float(min(regionOfInterest, key=lambda item:item[1])[1] / newHeight)
         # maxX = float(max(regionOfInterest, key=lambda item:item[0])[0] / newWidth)
         # maxY = float(max(regionOfInterest, key=lambda item:item[1])[1] / newHeight)
 
-        config.set(fileName, "detectorFrame", str([(minX, minY),(maxX, maxY)]))
+        config.set(fileName, "detectorFrame", str(detectorBoxFloat))
         with open(configFile, 'w') as configfile:
             config.write(configfile)
         break
@@ -166,28 +162,31 @@ while True:
         mask = np.zeros((newHeight,newWidth), dtype=np.uint8)
         
         for i in range(1,roiAmount+1):
-            regionOfInterest = roiPolygon[:4*i]
+            startIndex = 0
+            if i > 1: startIndex = (i-1) * 4 - 1
+            regionOfInterest = roiPolygon[startIndex:4*i]
             cv2.fillPoly(mask, [np.array(regionOfInterest)], 1)
+            
             # Build detector frame square
-
             minX = min(regionOfInterest, key=lambda item:item[0])[0]
-            minY = min(regionOfInterest, key=lambda item:item[0])[1]
+            minY = min(regionOfInterest, key=lambda item:item[1])[1]
             maxX = max(regionOfInterest, key=lambda item:item[0])[0]
-            maxY = max(regionOfInterest, key=lambda item:item[0])[1]
-            dX = maxX - minX
-            dY = maxY - minY
+            maxY = max(regionOfInterest, key=lambda item:item[1])[1]
+            dX = int((maxX - minX)*0.8)
+            dY = int((maxY - minY)*0.8)
             dSquare.append(min(dX, dY)) #Square edge length (pixels)
 
         image_to_show = np.copy(frame)
-        image_to_show = cv2.bitwise_and(image_to_show,image_to_show, mask=mask)
+        maskedImage = cv2.bitwise_and(image_to_show,image_to_show, mask=mask)
+        image_to_show = np.copy(maskedImage)
         cv2.imshow(windowName, image_to_show)
-        # Now show squares
 
     elif k == ord("r"):
         # Reset the points
         cv2.destroyWindow(windowName)
         roiPolygon = []
         dSquare = []
+        detectorCount = 0
         mode = "D"
         image_to_show = np.copy(frame)
         cv2.imshow(windowName, image_to_show)
@@ -195,6 +194,5 @@ while True:
         print("Reset the points, please start over.")
     elif (k == 27) or (k == ord("q")):
         break
-
 
 cv2.destroyAllWindows()        
