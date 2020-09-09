@@ -2,6 +2,8 @@ from collections import Counter
 from uuid import uuid4
 import numpy as np
 import cv2
+from math import atan2
+from math import pi
 from MqttClient import sendMessage
 
 # this class holds the detected objects and tracks them
@@ -22,6 +24,8 @@ class TrafficObject:
     measuresTopicLevel = ""
     sapIotDeviceID = ""
     roiArea = [] #ROI area defined from config file
+    trafficUpdown = False #Direction of traffic from config file
+    xMeterPixel = 0.
 
 
     # Constructor method
@@ -38,6 +42,8 @@ class TrafficObject:
         self.track.append((timestamp, TrafficObject.__calcCenter(bBox))) # start track
         self.speed = 0.
         self.detectorNo = detectorNo
+        self.direction = 0
+        self.compassDirection = ""
 
     # Destructor method
     def __del__(self):
@@ -116,6 +122,18 @@ class TrafficObject:
     def __getBBox(self):
         return self.box
 
+    def __direction_lookup(self, destination_x, origin_x, destination_y, origin_y):
+        deltaX = destination_x - origin_x
+        deltaY = destination_y - origin_y
+        degrees_temp = atan2(deltaX, deltaY)/pi*180
+        if degrees_temp < 0:
+            degrees_final = 360 + degrees_temp
+        else:
+            degrees_final = degrees_temp
+        compass_brackets = ["N", "NE", "E", "SE", "S", "SW", "W", "NW", "N"]
+        compass_lookup = round(degrees_final / 45)
+        return compass_brackets[compass_lookup], degrees_final
+
     # Get credit factor of tracker (must be greater than zero)
     def getCredit(self):
         creditFactor = int(100 * self.detectionCredit / self.creditLimit)
@@ -160,28 +178,48 @@ class TrafficObject:
         else:
             return False #tracker lost track 
 
+    # This checks if tracker is still in boundaries for distance measurement
+    def __checkBoundary(self, x,y):
+        if TrafficObject.trafficUpdown: #Up/Down traffic
+            chkPos = y
+        else:                           #Left/Right traffic
+            chkPos = x
+        if chkPos >= TrafficObject.minPixel and chkPos <= TrafficObject.maxPixel: 
+            return True
+        else:
+            return False
+
     # Calculate speed
     def __getSpeed(self, useAllData=False, nFrames = 2):
         speed = 0
         n = len(self.track)
         if n>=nFrames: # Check we have sufficient measurements
             if useAllData: # We measure from first trackpoint to current trackpoint (higher precision?)
-                for yP in self.track:
-                    y0 = yP[1][1] 
-                    t0 = yP[0]
-                    if y0 >= TrafficObject.minPixel and y0 <= TrafficObject.maxPixel: break
-                for yP in reversed(self.track):
-                    y1 = yP[1][1] 
-                    t1 = yP[0]
-                    if y1 >= TrafficObject.minPixel and y1 <= TrafficObject.maxPixel: break
+                for xyP in self.track:
+                    x0 = xyP[1][0]
+                    y0 = xyP[1][1]                    
+                    t0 = xyP[0]                    
+                    if self.__checkBoundary(x0,y0): break
+                for xyP in reversed(self.track):
+                    x1 = xyP[1][0]
+                    y1 = xyP[1][1]
+                    t1 = xyP[0]
+                    if self.__checkBoundary(x1,y1): break
             else:
+                x0 = self.track[n-nFrames][1][0]   
                 y0 = self.track[n-nFrames][1][1]        
                 t0 = self.track[n-nFrames][0]
+                x1 = self.track[n-1][1][0]
                 y1 = self.track[n-1][1][1]
                 t1 = self.track[n-1][0]
-            # Inside reference boundaries:
-            if y0>=TrafficObject.minPixel and y0<=TrafficObject.maxPixel and y1>=TrafficObject.minPixel and y1<=TrafficObject.maxPixel: 
-                distance = abs(np.polyval(TrafficObject.pff, y0) - np.polyval(TrafficObject.pff, y1)) # interpolated distance in meters
+            # Update direction of object
+            self.compassDirection, self.direction = self.__direction_lookup(x1,x0,y1,y0)
+            # Inside reference boundaries considering traffic direction:
+            if self.__checkBoundary(x0,y0) and self.__checkBoundary(x1,y1):
+                if TrafficObject.trafficUpdown:
+                    distance = abs(np.polyval(TrafficObject.pff, y0) - np.polyval(TrafficObject.pff, y1)) # interpolated distance in meters
+                else:
+                    distance = abs(x0 - x1) * TrafficObject.xMeterPixel
                 timeTravelled = (t1 - t0) / 1000 # time in seconds
                 speed = (distance / timeTravelled) # speed in m/s
                 return speed
@@ -196,7 +234,7 @@ class TrafficObject:
 
     # Get Vehicle direction data
     def  __getVehicleDirection(self):
-        return "Inbound", 179.5 # Verbal and angle, video frame up is north 0°
+        return self.compassDirection, self.direction # Verbal and angle, video frame up is north 0°
 
     # Get vehicle class data
     def getVehicleClass(self):

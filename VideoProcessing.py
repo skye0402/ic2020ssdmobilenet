@@ -35,7 +35,7 @@ class VideoProcessor:
             #self.vs = cv2.VideoCapture(0)
             #self.vs.release()
             self.vs = cv2.VideoCapture(0, cv2.CAP_V4L)
-            self.vs.set(cv2.CAP_PROP_FRAME_WIDTH,1280)#int(format))
+            self.vs.set(cv2.CAP_PROP_FRAME_WIDTH,1280)
             self.vs.set(cv2.CAP_PROP_FRAME_HEIGHT, 960)           
             sleep(2) #wait 2 seconds for sensor to boot up
         elif hostname != "" and hostname != None:

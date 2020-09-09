@@ -19,7 +19,7 @@ regionOfInterest = []
 roiAmount = 1
 detectorBox = []
 detectorCount = 0
-dSquare = []
+dRectangles = []
 upDown = True # Left/Right = False
 imageSize = 0 # Width (leftRight) or Height (upDown)
 configFile = "./config/measurements.ini"
@@ -28,7 +28,7 @@ lastY = 0
 
 def mouse_callback(event, x, y, flags, param):
  
-    global image_to_show, s_x, s_y, e_x, e_y, mouse_pressed, detectorCount, dSquare, maskedImage, lastX, lastY
+    global image_to_show, s_x, s_y, e_x, e_y, mouse_pressed, detectorCount, dRectangles, maskedImage, lastX, lastY
     if mode == "D":
         if event == cv2.EVENT_LBUTTONDOWN:
             mouse_pressed = True        
@@ -44,22 +44,28 @@ def mouse_callback(event, x, y, flags, param):
                 print("Press V to preview, press R to reset.")
 
     elif mode == "S":
+        # This code handles the detector windows. It starts with a square as this is ideal for using
+        # the CNN (in current case 300x300px)
+        # However, it might be benficial to make it rectangular using Xx and Yy keys (bigger, smaller)
         if detectorCount == 0:
             colorCode = (0,255,0) 
         else: 
             colorCode = (255,0,0)
 
-        if event == cv2.EVENT_LBUTTONDOWN:
-            image_to_show = np.copy(maskedImage)
-            if detectorCount>0:
-                cv2.rectangle(image_to_show,detectorBox[0],detectorBox[1], color=(0,255,0))
-
-            cv2.rectangle(image_to_show,(x,y),(x+dSquare[detectorCount],y+dSquare[detectorCount]), color=colorCode)
+        if event == cv2.EVENT_LBUTTONDOWN: # every left-click allows for replacing the detector box
             lastX = x
             lastY = y
-        if event == cv2.EVENT_RBUTTONDOWN:
+            (x2, y2) = dRectangles[detectorCount]
+            image_to_show = np.copy(maskedImage)
+            if detectorCount>0:
+                cv2.rectangle(image_to_show,detectorBox[0],detectorBox[1], color=(0,255,0))            
+            cv2.rectangle(image_to_show,(x,y),(x+x2,y+y2), color=colorCode)
+
+        if event == cv2.EVENT_RBUTTONDOWN: #Right-click saves the settings for the detector size and position
+            (x2, y2) = dRectangles[detectorCount]
             detectorBox.append((lastX, lastY))
-            detectorBox.append((lastX+dSquare[detectorCount], lastY+dSquare[detectorCount]))
+            detectorBox.append((lastX+x2, lastY+y2))
+            print("Confirmed detector box ",detectorCount)
             detectorCount += 1
         
 # Main program
@@ -128,8 +134,10 @@ cv2.setMouseCallback(windowName, mouse_callback, frame)
 while True:
     cv2.imshow(windowName, image_to_show)
     k = cv2.waitKey(1)
+    if k<0: k=0
+    k = chr(k)
 
-    if (k == ord("s") and len(roiPolygon)==4*roiAmount): 
+    if (k == "s" and len(roiPolygon)==4*roiAmount): 
         # Save measurements
         floatRoi = []
         for pointXY in roiPolygon:
@@ -146,17 +154,12 @@ while True:
             relX = xyC[0] / newWidth
             relY = xyC[1] / newHeight
             detectorBoxFloat.append((relX,relY))
-        # # Get the frame for the detector to maximize the network resolution
-        # minX = float(min(regionOfInterest, key=lambda item:item[0])[0] / newWidth)
-        # minY = float(min(regionOfInterest, key=lambda item:item[1])[1] / newHeight)
-        # maxX = float(max(regionOfInterest, key=lambda item:item[0])[0] / newWidth)
-        # maxY = float(max(regionOfInterest, key=lambda item:item[1])[1] / newHeight)
 
         config.set(fileName, "detectorFrame", str(detectorBoxFloat))
         with open(configFile, 'w') as configfile:
             config.write(configfile)
         break
-    elif k == ord("v") and len(roiPolygon)==4*roiAmount:
+    elif k == "v" and len(roiPolygon)==4*roiAmount:
         # Preview the ROI
         mode = "S" # Set square
         mask = np.zeros((newHeight,newWidth), dtype=np.uint8)
@@ -167,32 +170,46 @@ while True:
             regionOfInterest = roiPolygon[startIndex:4*i]
             cv2.fillPoly(mask, [np.array(regionOfInterest)], 1)
             
-            # Build detector frame square
+            # Build detector frame square (starting point, might become a rectangle later)
             minX = min(regionOfInterest, key=lambda item:item[0])[0]
             minY = min(regionOfInterest, key=lambda item:item[1])[1]
             maxX = max(regionOfInterest, key=lambda item:item[0])[0]
             maxY = max(regionOfInterest, key=lambda item:item[1])[1]
             dX = int((maxX - minX)*0.8)
             dY = int((maxY - minY)*0.8)
-            dSquare.append(min(dX, dY)) #Square edge length (pixels)
+            dRectangles.append((min(dX, dY),min(dX, dY))) #Square edge length (pixels)
 
         image_to_show = np.copy(frame)
         maskedImage = cv2.bitwise_and(image_to_show,image_to_show, mask=mask)
         image_to_show = np.copy(maskedImage)
         cv2.imshow(windowName, image_to_show)
 
-    elif k == ord("r"):
+    elif k == "r":
         # Reset the points
         cv2.destroyWindow(windowName)
         roiPolygon = []
-        dSquare = []
+        dRectangles = []
         detectorCount = 0
         mode = "D"
         image_to_show = np.copy(frame)
         cv2.imshow(windowName, image_to_show)
         cv2.setMouseCallback(windowName, mouse_callback, frame)
         print("Reset the points, please start over.")
-    elif (k == 27) or (k == ord("q")):
+
+    #Resizing of rectangle
+    elif k in "xXyY":
+        (xD, yD) = dRectangles[detectorCount]
+        if k == "x":
+            xD -= 1
+        elif k == "X":
+            xD += 1
+        elif k == "y":
+            yD -= 1
+        elif k == "Y":
+            yD += 1 
+        dRectangles[detectorCount] = (xD, yD)
+
+    elif (ord(k) == 27) or (k == "q"):
         break
 
 cv2.destroyAllWindows()        

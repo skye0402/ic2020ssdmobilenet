@@ -159,7 +159,7 @@ if __name__ == "__main__":
     fileName = basename(args["video"]) 
     # Measurements reference file for speed
     referenceLength = config.getfloat(fileName, "referencelenght")
-    trafficupdown = config.getboolean(fileName, "trafficupdown")
+    trafficUpdown = config.getboolean(fileName, "trafficupdown")
     distanceReference = eval(config.get(fileName, "references"))
     regionOfInterest = eval(config.get(fileName, "roi"))
     detectorReference = eval(config.get(fileName, "detectorframe"))
@@ -240,14 +240,22 @@ if __name__ == "__main__":
     # Calculate fitting for distance measurement
     referenceDataList = np.asarray(pixelReference, dtype=np.float)
     pixelY = referenceDataList[:,1] # Get height reference pixels (Y-Axis)
+    pixelX = referenceDataList[:,0] # Get width reference pixels (X-Axis)
     meterScale = np.linspace(0, referenceLength*(len(pixelReference)-1), len(pixelReference)) # Create meter-scale
     polyFitFactors = np.polyfit(pixelY, meterScale, 4) #Polynominal fitting of n-th grade
+    TrafficObject.xMeterPixel = float(max(meterScale)/(max(pixelX)-min(pixelX)))
     TrafficObject.pff = polyFitFactors # Send to class variable
-    TrafficObject.minPixel = min(pixelY)
-    TrafficObject.maxPixel = max(pixelY)
+    # Determine boundaries for speed calculation (depending on direction of traffic)
+    if trafficUpdown:
+        TrafficObject.minPixel = min(pixelY)
+        TrafficObject.maxPixel = max(pixelY)
+    else:
+        TrafficObject.minPixel = min(pixelX)
+        TrafficObject.maxPixel = max(pixelX)
+
     TrafficObject.framesForSpeedCalc = framesForSpeedCalc
     TrafficObject.roiArea = roiInPixel
-    #TrafficObject.maxXBoundary, TrafficObject.maxYBoundary = detectorinPixel[1] # Tracker ends here
+    TrafficObject.trafficUpdown = trafficUpdown
 
     # Optional: write video out
     writeVideo = False
@@ -272,8 +280,8 @@ if __name__ == "__main__":
             startIndex = i*2 - 2
             endIndex = i*2
             frame = resizeAndPadImage(orig, maskImage, networkSize, detectorinPixel[startIndex:endIndex])
-            # cv2.imshow("New detector image", frame)
-            # cv2.waitKey(0)
+            #cv2.imshow("Detector {:d}".format(i), frame)
+            #cv2.waitKey(0)
             
             # from BGR to RGB channel ordering 
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -306,7 +314,7 @@ if __name__ == "__main__":
                 cX = startX + (endX-startX)/2
                 cY = startY + (endY-startY)/2
                 detectorWidth = currentDetectorinPixel[1][0]-currentDetectorinPixel[0][0]
-                detectorWidthBorder = int((detectorWidth - detectorWidth * 0.8)/2) #TODO: Y and X depending on traffic flow and factor into config!
+                detectorWidthBorder = int((detectorWidth - detectorWidth * 0.9)/2) #TODO: Y and X depending on traffic flow and factor into config!
 
                 if (cX<currentDetectorinPixel[0][0]+detectorWidthBorder) or (cX>currentDetectorinPixel[1][0]-detectorWidthBorder):
                     print("Outside of borders for ",i)

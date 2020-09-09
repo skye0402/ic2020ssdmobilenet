@@ -3,6 +3,7 @@ import numpy as np
 import PySimpleGUI as sg
 import argparse
 import configparser
+from time import sleep
 from os.path import basename 
 
 mouse_pressed = False
@@ -22,6 +23,13 @@ def mouse_callback(event, x, y, flags, param):
         cv2.circle(image_to_show, (x,y), 3, (0, 255, 0))
         print(x,y)
         referenceInPixels.append((x,y))
+
+def isFloat(inputStr):
+    try:
+        float(inputStr)
+        return True
+    except ValueError:
+        return False
         
 # Main program
 # construct the argument parser and parse the arguments
@@ -49,7 +57,7 @@ while True:
     if event == sg.WIN_CLOSED or event == "Cancel":	# if user closes window or clicks cancel
         print("Leaving program.")
         quit()
-    if values["-LENGTH-"].isnumeric():
+    if isFloat(values["-LENGTH-"]):
         if float(values["-LENGTH-"]) > 0:
 
             print("You entered ", values["-LENGTH-"],"m.")
@@ -62,7 +70,8 @@ while True:
 # Load video
 if args["camera"]:
     vs = cv2.VideoCapture(0)
-    vs.set(cv2.CAP_PROP_FRAME_WIDTH,int(args["format"]))
+    vs.set(cv2.CAP_PROP_FRAME_WIDTH,1280)
+    sleep(2)
 else:
     vs = cv2.VideoCapture(args["video"])
 
