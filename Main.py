@@ -48,13 +48,12 @@ def invokeInterpreter(interpreter, inputdetails, outputdetails, image):
     #num = interpreter.get_tensor(output_details[3]['index'])[0]  # Total number of detected objects (inaccurate and not needed)
     return boxes, classes, scores
 
-def getBoundingBox(boxData, newWidth, newHeight, detectorImageRectangle, detectorNo):
-    sI = detectorNo*2-2
-    eI = detectorNo*2-1
+def getBoundingBox(boxData, newWidth, newHeight, detectorImageRectangle):
     (startY, startX, endY, endX) = boxData
+
     # Calculate the detection boxes based on the detector image
-    x0,y0 = detectorImageRectangle[sI]
-    x1,y1 = detectorImageRectangle[eI]
+    x0,y0 = detectorImageRectangle[0]
+    x1,y1 = detectorImageRectangle[1]
 
     detectorWidth = x1-x0
     detectorHeight = y1-y0
@@ -293,12 +292,25 @@ if __name__ == "__main__":
         # loop over the confidence results
         for i in range(1, detectorAmount+1):
             boxes, classes, scores = detectorResults[i-1]
+            sI = i*2-2
+            eI = i*2
+            currentDetectorinPixel =  detectorinPixel[sI:eI]  
+    
             for index, conf in enumerate(scores):
                 if not ((conf > detectionConfidence) and (conf <= 1.0) and (TrafficObject.isClassRelevant(int(classes[index])))): break
                 # extract the bounding box and predicted class label
-                box = getBoundingBox(boxes[index].flatten(), newWidth, newHeight, detectorinPixel, i)      
+                box = getBoundingBox(boxes[index].flatten(), newWidth, newHeight, currentDetectorinPixel)      
                 label = TrafficObject.getClassName(classes[index].astype("int"))
                 startX, startY, endX, endY = box
+                # Get center of detection box
+                cX = startX + (endX-startX)/2
+                cY = startY + (endY-startY)/2
+                detectorWidth = currentDetectorinPixel[1][0]-currentDetectorinPixel[0][0]
+                detectorWidthBorder = int((detectorWidth - detectorWidth * 0.8)/2) #TODO: Y and X depending on traffic flow and factor into config!
+
+                if (cX<currentDetectorinPixel[0][0]+detectorWidthBorder) or (cX>currentDetectorinPixel[1][0]-detectorWidthBorder):
+                    print("Outside of borders for ",i)
+                    break
                 if (float(endX-startX)/newWidth) > maxTrackerBoxSize: break # Skips unlikely big detections
                 
                 # Tracking handling starts here
